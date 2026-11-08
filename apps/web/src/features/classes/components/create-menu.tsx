@@ -88,7 +88,7 @@ export function CreateMenu({ cls, post }: { cls: Class; post?: Post }) {
         )}
       </div>
 
-      {post && <AnnouncementComposer post={post} kind={composing} onClose={() => setComposing(null)} />}
+      {post && <AnnouncementComposer post={post} kind={composing} onClose={() => setComposing(null)} classTitle={cls.title} />}
       <NewQuizButton classes={[cls]} classId={cls.id} open={quiz} onOpenChange={setQuiz} hideTrigger />
     </div>
   );

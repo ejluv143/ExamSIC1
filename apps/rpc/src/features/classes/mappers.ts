@@ -46,11 +46,15 @@ export const toRosterStudent = ({ id, studentNumber, firstName, lastName, email,
   sex,
 });
 
-export const toAnnouncement = ({ id, kind, title, body, dueAt, createdAt }: AnnouncementItem) => ({
+export const toAnnouncement = ({ id, kind, title, body, dueAt, attachments, points, timeLimitMinutes, rubric, createdAt }: AnnouncementItem) => ({
   id,
   kind: (kind === "assignment" || kind === "activity" ? kind : "announcement") as "announcement" | "assignment" | "activity",
   title,
   body,
   dueAt: dueAt ? dueAt.toISOString() : null,
+  attachments,
+  points,
+  timeLimitMinutes,
+  rubric,
   createdAt: createdAt.toISOString(),
 });

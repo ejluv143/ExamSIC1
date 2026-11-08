@@ -35,6 +35,13 @@ export class ClassRepo extends Context.Service<
     // A class's announcements, newest first.
     readonly announcements: (classId: string) => Effect.Effect<AnnouncementItem[]>;
     readonly insertAnnouncement: (row: typeof classAnnouncements.$inferInsert) => Effect.Effect<AnnouncementItem>;
+    // Changes what a post says; null when the class has no such post of that kind.
+    readonly updateAnnouncement: (
+      classId: string,
+      id: string,
+      kind: string,
+      values: Pick<AnnouncementItem, "title" | "body" | "dueAt" | "attachments" | "points" | "timeLimitMinutes" | "rubric">,
+    ) => Effect.Effect<AnnouncementItem | null>;
     // Deletes the class's announcement; false when it isn't there.
     readonly deleteAnnouncement: (classId: string, id: string) => Effect.Effect<boolean>;
     // The teacher's classes that aren't archived, by course code and section.
@@ -106,6 +113,16 @@ export class ClassRepo extends Context.Service<
         insertAnnouncement: Effect.fn("ClassRepo.insertAnnouncement")(function* (row) {
           const [created] = yield* db.query((d) => d.insert(classAnnouncements).values(row).returning());
           return created!;
+        }),
+        updateAnnouncement: Effect.fn("ClassRepo.updateAnnouncement")(function* (classId, id, kind, values) {
+          const [updated] = yield* db.query((d) =>
+            d
+              .update(classAnnouncements)
+              .set(values)
+              .where(and(eq(classAnnouncements.classId, classId), eq(classAnnouncements.id, id), eq(classAnnouncements.kind, kind)))
+              .returning(),
+          );
+          return updated ?? null;
         }),
         deleteAnnouncement: Effect.fn("ClassRepo.deleteAnnouncement")(function* (classId, id) {
           const removed = yield* db.query((d) =>

@@ -3,8 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarCheck, ClipboardList, ClipboardCheck, ExternalLink, Megaphone, Pencil, Printer, Shapes, Sheet } from "lucide-react";
 import clsx from "clsx";
+import type { SessionListItem } from "@examinus/contract/session";
 import { classColors } from "@examinus/domain/classes";
 import { ButtonLink, Card, EmptyState } from "@/components/ui";
+import { Markdown } from "@/components/markdown";
 import { CustomizeAppearance } from "@/features/classes/components/customize-appearance";
 import { CreateMenu } from "@/features/classes/components/create-menu";
 import { ClassroomSyncButton } from "@/features/classes/components/classroom-sync-button";
@@ -12,18 +14,20 @@ import {
   deleteAnnouncementAction,
   newJoinCodeAction,
   postAnnouncementAction,
+  updateAnnouncementAction,
   removeStudentAction,
   customizeClassAction,
   syncRosterAction,
 } from "@/features/classes/actions";
-import { ModeBadge, StatusBadge } from "@/features/session/components/assessment-bits";
+import { ModeBadge, SessionStatusPill, StatusBadge, sessionGroupOf } from "@/features/session/components/assessment-bits";
+import { LiveRefresh } from "@/features/classes/components/live-refresh";
 import { assetUrls } from "@/features/assets/data";
 import { getAnnouncements, getClass, getStudents } from "@/features/classes/data";
 import { listSessions } from "@/features/session/data";
 import { fullName } from "@/lib/format";
 import { formatDateTime } from "@examinus/copy/time";
 import { JoinCode, RemoveStudentButton } from "@/features/classes/components/class-actions";
-import { DeleteAnnouncementButton } from "@/features/classes/components/announcements";
+import { AttachmentList, DeleteAnnouncementButton, EditAnnouncementButton, PostDetails } from "@/features/classes/components/announcements";
 
 const tabs = [
   { id: "stream", label: "Stream" },
@@ -88,10 +92,16 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
       session,
       quizTitle,
     })),
-  ].sort((a, b) => b.at - a.at);
+  ].sort((a, b) => {
+    // A session that is live (or whose lobby is open) comes first, like a pinned announcement.
+    const live = (x: (typeof feed)[number]) => (x.type === "session" && sessionGroupOf(x.session) === "live" ? 1 : 0);
+    return live(b) - live(a) || b.at - a.at;
+  });
+  const anyLive = sessions.some(({ session }) => sessionGroupOf(session) === "live");
 
   return (
     <>
+      {anyLive && <LiveRefresh />}
       <Link href="/teacher/classes" className="mb-3 inline-block text-sm text-muted hover:text-foreground">
         ← Classes
       </Link>
@@ -237,9 +247,12 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                     <span className="block truncate font-medium">{a.title}</span>
                     <span className="block text-sm text-muted">
                       {a.dueAt ? `Due ${formatDateTime(a.dueAt)}` : `Posted ${formatDateTime(a.createdAt)}`}
+                      {a.points != null && ` · ${a.points} pts`}
+                      {a.timeLimitMinutes ? ` · ${a.timeLimitMinutes} min` : ""}
                     </span>
                   </span>
                   <span className="text-xs text-muted capitalize">{a.kind}</span>
+                  <EditAnnouncementButton announcement={a} post={updateAnnouncementAction.bind(null, cls.id, a.id)} classTitle={cls.title} />
                   <DeleteAnnouncementButton remove={deleteAnnouncementAction.bind(null, cls.id, a.id)} />
                 </li>
               ))}
@@ -372,35 +385,21 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                           {item.announcement.dueAt && ` · Due ${formatDateTime(item.announcement.dueAt)}`}
                         </p>
                       </div>
+                      <EditAnnouncementButton
+                        announcement={item.announcement}
+                        post={updateAnnouncementAction.bind(null, cls.id, item.announcement.id)}
+                        classTitle={cls.title}
+                      />
                       <DeleteAnnouncementButton remove={deleteAnnouncementAction.bind(null, cls.id, item.announcement.id)} />
                     </div>
                     {item.announcement.body && (
-                      <p className="mt-3 text-sm whitespace-pre-wrap">{item.announcement.body}</p>
+                      <Markdown className="mt-3 text-sm">{item.announcement.body}</Markdown>
                     )}
+                    <PostDetails post={item.announcement} />
+                    <AttachmentList attachments={item.announcement.attachments} />
                   </Card>
                 ) : (
-                  <Card key={item.session.id} className="p-0">
-                    <Link
-                      href={`/teacher/assessments/${item.session.quizId}/sessions/${item.session.id}`}
-                      className="block rounded-xl p-4 hover:bg-surface-muted"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                          <ClipboardList className="size-5" aria-hidden />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium">
-                            You posted a new {item.session.mode}: {item.quizTitle}
-                          </p>
-                          <p className="text-sm text-muted">
-                            {item.session.opensAt ? `Opens ${formatDateTime(item.session.opensAt)}` : "Not scheduled"}
-                          </p>
-                        </div>
-                        <ModeBadge mode={item.session.mode} />
-                        <StatusBadge status={item.session.status} />
-                      </div>
-                    </Link>
-                  </Card>
+                  <SessionPost key={item.session.id} item={item} />
                 ),
               )
             )}
@@ -408,5 +407,56 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
         </div>
       )}
     </>
+  );
+}
+
+// A quiz or exam in the stream, like an announcement: when it is live (or its lobby is open) it says so, stands out
+// and opens the live view; before that it says when it starts.
+function SessionPost({ item }: { item: { session: SessionListItem["session"]; quizTitle: string } }) {
+  const { session, quizTitle } = item;
+  const group = sessionGroupOf(session);
+  const href = `/teacher/assessments/${session.quizId}/sessions/${session.id}`;
+  const heading =
+    group === "live"
+      ? session.status === "lobby"
+        ? `${quizTitle} is open: students are joining`
+        : `${quizTitle} is live now`
+      : group === "upcoming"
+        ? `Upcoming ${session.mode}: ${quizTitle}`
+        : `${quizTitle}`;
+  const when =
+    group === "upcoming"
+      ? session.opensAt
+        ? `Starts ${formatDateTime(session.opensAt)}`
+        : "Starts when you press Start"
+      : session.opensAt
+        ? `Opened ${formatDateTime(session.opensAt)}`
+        : "Not scheduled";
+  return (
+    <Card
+      className={clsx(
+        "p-0",
+        group === "live" && "relative overflow-hidden before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-success",
+      )}
+    >
+      <Link href={href} className="block rounded-xl p-4 hover:bg-surface-muted">
+        <div className="flex items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+            <ClipboardList className="size-5" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium">{heading}</p>
+            <p className="text-sm text-muted">{when}</p>
+          </div>
+          <ModeBadge mode={session.mode} />
+          {group === "live" ? <SessionStatusPill session={session} /> : <StatusBadge status={session.status} />}
+        </div>
+        {group === "live" && (
+          <p className="mt-3 ml-[3.25rem] text-sm font-medium text-primary">
+            {session.status === "lobby" ? "Open the lobby" : "Open the live view"} →
+          </p>
+        )}
+      </Link>
+    </Card>
   );
 }

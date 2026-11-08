@@ -37,6 +37,11 @@ export const ClassHandlers = ClassRpcs.toLayer(
         return toAnnouncement(yield* classes.postAnnouncement(me.actor, classId, post));
       }),
 
+      "class.updateAnnouncement": Effect.fn("class.updateAnnouncement")(function* ({ classId, announcementId, post }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return toAnnouncement(yield* classes.updateAnnouncement(me.actor, classId, announcementId, post));
+      }),
+
       "class.deleteAnnouncement": Effect.fn("class.deleteAnnouncement")(function* ({ classId, announcementId }) {
         const me = yield* requireActor({ class: ["update"] });
         yield* classes.deleteAnnouncement(me.actor, classId, announcementId);

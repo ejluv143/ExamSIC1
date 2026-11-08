@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Result, Schema, SchemaGetter } from "effect";
 import { subjectAreaNames } from "@examinus/domain/roles";
-import { classColorNames } from "@examinus/domain/classes";
+import { attachmentKinds, classColorNames, type PostFields } from "@examinus/domain/classes";
 import { parseForm } from "@/lib/validate";
 import {
   archiveClass,
@@ -12,6 +12,7 @@ import {
   newJoinCode,
   removeStudent,
   postAnnouncement,
+  updateAnnouncement,
   deleteAnnouncement,
   updateClass,
   customizeClass,
@@ -105,11 +106,8 @@ export async function removeStudentAction(classId: string, studentId: string): P
   revalidatePath(`/teacher/classes/${classId}`, "layout");
 }
 
-export async function postAnnouncementAction(
-  classId: string,
-  _prev: ClassFormState,
-  formData: FormData,
-): Promise<ClassFormState> {
+// The post a dialog's form describes, or what is wrong with it.
+function readPost(formData: FormData): PostFields | { error: string } {
   const rawKind = String(formData.get("kind") ?? "");
   const kind = rawKind === "assignment" || rawKind === "activity" ? rawKind : "announcement";
   const title = String(formData.get("title") ?? "").trim();
@@ -122,12 +120,68 @@ export async function postAnnouncementAction(
   const due = String(formData.get("dueAt") ?? "");
   const dueDate = due ? new Date(due) : null;
   if (dueDate && Number.isNaN(dueDate.getTime())) return { error: "That due date isn't valid." };
-  const error = await postAnnouncement(classId, {
+  // The attachments the dialog collected, as JSON; each is checked again by the API.
+  let attachments: PostFields["attachments"] = [];
+  try {
+    const parsed: unknown = JSON.parse(String(formData.get("attachments") || "[]"));
+    if (Array.isArray(parsed)) {
+      attachments = parsed.flatMap((a) =>
+        a && typeof a === "object" && attachmentKinds.includes(a.kind) && typeof a.url === "string"
+          ? [{ kind: a.kind, url: a.url, title: typeof a.title === "string" ? a.title : "" }]
+          : [],
+      );
+    }
+  } catch {
+    return { error: "The attachments couldn't be read." };
+  }
+  // An assignment's points, time limit (minutes) and rubric; the API checks them again.
+  const wholeNumber = (name: string, label: string): number | null | { error: string } => {
+    const raw = String(formData.get(name) ?? "").trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : { error: `${label} must be a whole number.` };
+  };
+  const points = wholeNumber("points", "Points");
+  if (points !== null && typeof points === "object") return points;
+  const timeLimit = wholeNumber("timeLimit", "The time limit");
+  if (timeLimit !== null && typeof timeLimit === "object") return timeLimit;
+  let rubric: NonNullable<PostFields["rubric"]> = [];
+  try {
+    const parsed: unknown = JSON.parse(String(formData.get("rubric") || "[]"));
+    if (Array.isArray(parsed))
+      rubric = parsed.flatMap((r) =>
+        r && typeof r === "object" && typeof r.criterion === "string" && Number.isInteger(r.points) ? [{ criterion: r.criterion, points: r.points as number }] : [],
+      );
+  } catch {
+    return { error: "The rubric couldn't be read." };
+  }
+  return {
     kind,
     title,
     body,
+    attachments,
     dueAt: kind === "announcement" || !dueDate ? null : dueDate.toISOString(),
-  });
+    ...(kind === "assignment" && { points, timeLimitMinutes: timeLimit === 0 ? null : timeLimit, rubric }),
+  };
+}
+
+export async function postAnnouncementAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await postAnnouncement(classId, post);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function updateAnnouncementAction(
+  classId: string,
+  announcementId: string,
+  _prev: ClassFormState,
+  formData: FormData,
+): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await updateAnnouncement(classId, announcementId, post);
   if (error) return { error };
   revalidatePath(`/teacher/classes/${classId}`, "layout");
 }

@@ -218,6 +218,20 @@
       "when": 1794054546893,
       "tag": "0030_class_header_image",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794064704396,
+      "tag": "0031_post_files",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794065756709,
+      "tag": "0032_assignment_fields",
+      "breakpoints": true
     }
   ]
 }

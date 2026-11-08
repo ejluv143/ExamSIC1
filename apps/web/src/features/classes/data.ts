@@ -101,6 +101,11 @@ export async function postAnnouncement(classId: string, post: PostFields) {
   return messageOf(await apiCall((api) => api["class.postAnnouncement"]({ classId, post })));
 }
 
+export async function updateAnnouncement(classId: string, announcementId: string, post: PostFields) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.updateAnnouncement"]({ classId, announcementId, post })));
+}
+
 export async function deleteAnnouncement(classId: string, announcementId: string) {
   await requirePermission({ class: ["update"] });
   return messageOf(await apiCall((api) => api["class.deleteAnnouncement"]({ classId, announcementId })));

@@ -2,7 +2,7 @@
 // class is invisible, a claim goes to an unclaimed entry only), and a ClassRoster that keeps the members and records what
 // the real one does to the sessions (its rules are tested against Postgres in Roster.test.ts).
 import { Effect, Layer } from "effect";
-import type { ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, StudentItem } from "../../database/schemas/index.ts";
 import { stub } from "../../testing/config.ts";
 import type { Actor } from "../auth/Session.ts";
 import { ClassRepo, type LinkedAccount } from "./Repo.ts";
@@ -82,6 +82,8 @@ export const fakeClassRepo = (world: ClassWorld = {}) => {
   const accounts = (world.accounts ?? []).map((a) => ({ ...a }));
   // What the roster did to sessions, recorded as "joined c1 s1", "left c1 s1", "claimed s1", "filled sess1 c1", "moved sess1 c1".
   const sessionChanges: string[] = [];
+  // The posts of the classes' streams, and every write to them.
+  const posts: AnnouncementItem[] = [];
   const savedTokens: Array<{ accountId: string; accessToken: string }> = [];
   const visible = (c: ClassItem) => c.archivedAt === null;
   const isTheirs = (c: ClassItem, actor: Actor) =>
@@ -102,6 +104,17 @@ export const fakeClassRepo = (world: ClassWorld = {}) => {
         return student && cls && memberOf(classId, student.id) ? { cls, studentId: student.id } : null;
       }),
     insert: (row) => Effect.sync(() => void classes.push(Object.assign(classItem(), row))),
+    insertAnnouncement: (row) =>
+      Effect.sync(() => {
+        const created = { dueAt: null, attachments: [], createdAt: epoch, ...row } as AnnouncementItem;
+        posts.push(created);
+        return created;
+      }),
+    updateAnnouncement: (classId, id, kind, values) =>
+      Effect.sync(() => {
+        const found = posts.find((p) => p.classId === classId && p.id === id && p.kind === kind);
+        return found ? Object.assign(found, values) : null;
+      }),
     update: (classId, set) =>
       Effect.sync(() => {
         const found = classes.find((c) => c.id === classId);
@@ -169,5 +182,5 @@ export const fakeClassRepo = (world: ClassWorld = {}) => {
       }),
     claimed: (studentId) => Effect.sync(() => void sessionChanges.push(`claimed ${studentId}`)),
   });
-  return { layer: Layer.mergeAll(Layer.succeed(ClassRepo, repo), Layer.succeed(ClassRoster, roster)), classes, students, members, sessionChanges, savedTokens };
+  return { layer: Layer.mergeAll(Layer.succeed(ClassRepo, repo), Layer.succeed(ClassRoster, roster)), classes, students, members, posts, sessionChanges, savedTokens };
 };

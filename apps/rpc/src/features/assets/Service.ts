@@ -1,7 +1,18 @@
 // Who may see which image, signed URLs for them, uploads, and the daily cleanup of images nothing refers to.
 import { createHash } from "node:crypto";
 import { Conflict, Forbidden, NotFound } from "@examinus/contract/errors";
-import { assetIdsIn, maxAssetBytes, type AssetMime } from "@examinus/domain/asset";
+import {
+  assetIdsIn,
+  assetMimes,
+  cleanFileName,
+  fileLooksLike,
+  fileMimeOf,
+  fileMimes,
+  maxAssetBytes,
+  maxFileBytes,
+  type AssetMime,
+  type FileMime,
+} from "@examinus/domain/asset";
 import { roleOf } from "@examinus/domain/roles";
 import { type SessionUser } from "@examinus/domain/user";
 import { Context, Effect, Layer } from "effect";
@@ -16,7 +27,8 @@ import { AssetRepo } from "./Repo.ts";
 
 const dayMs = 24 * 60 * 60 * 1000;
 
-export type Confirmed = { assetId: string; sizeBytes: number; width: number; height: number };
+// `width` and `height` are null for a file that isn't an image.
+export type Confirmed = { assetId: string; sizeBytes: number; width: number | null; height: number | null };
 
 export class Assets extends Context.Service<
   Assets,
@@ -28,12 +40,14 @@ export class Assets extends Context.Service<
     // For a student's paper and result: the question images among `ids`, and the student's own answer images.
     // Empty when storage isn't set up.
     readonly paperUrls: (studentId: string, ids: readonly string[]) => Effect.Effect<Record<string, string>>;
-    // Starts an upload: the user's role decides which kind of image it may be. The caller PUTs the file to the target.
+    // Starts an upload: the user's role decides which kind of image it may be (a teacher may also attach a document
+    // to a post: `fileName` is then what it is downloaded as). The caller PUTs the file to the target.
     readonly createUpload: (
       user: SessionUser,
       purpose: AssetItem["purpose"],
-      mime: AssetMime,
+      mime: AssetMime | FileMime,
       size: number,
+      fileName?: string,
     ) => Effect.Effect<{ assetId: string; url: string; fields: Record<string, string> }, Forbidden | Conflict | StorageNotConfigured>;
     // Checks the uploaded file is the image it claimed to be and marks the asset ready.
     readonly confirm: (user: SessionUser, assetId: string) => Effect.Effect<Confirmed, NotFound | Conflict | StorageNotConfigured>;
@@ -49,7 +63,13 @@ export class Assets extends Context.Service<
       const storage = yield* Storage;
 
       const sign = (rows: readonly AssetItem[]) =>
-        storage.signedUrls(rows.map((r) => r.s3Key)).pipe(
+        storage
+          .signedUrls(
+            rows.map((r) => r.s3Key),
+            // A post's file is served as a download under its own name.
+            new Map(rows.flatMap((r) => (r.purpose === "post" && r.fileName ? [[r.s3Key, r.fileName] as const] : []))),
+          )
+          .pipe(
           Effect.map((urls) => Object.fromEntries(rows.map((r) => [r.id, urls.get(r.s3Key)!]))),
         );
 
@@ -79,7 +99,8 @@ export class Assets extends Context.Service<
           });
           const questionIds = new Set(assetIdsIn(text.question));
           const answerIds = new Set(assetIdsIn(text.answer));
-          for (const a of others) if ((a.purpose === "question" ? questionIds : answerIds).has(a.id)) allowed.add(a.id);
+          // A post's file is only ever seen by whoever uploaded it.
+          for (const a of others) if (a.purpose !== "post" && (a.purpose === "question" ? questionIds : answerIds).has(a.id)) allowed.add(a.id);
         }
         return found.filter((a) => allowed.has(a.id));
       });
@@ -94,32 +115,53 @@ export class Assets extends Context.Service<
       const createUpload = Effect.fn("Assets.createUpload")(function* (
         user: SessionUser,
         purpose: AssetItem["purpose"],
-        mime: AssetMime,
+        mime: AssetMime | FileMime,
         size: number,
+        fileName?: string,
       ) {
-        // Teachers upload question images and students (and guests) their answers, nothing else.
+        // Teachers upload question images and files for their posts; students (and guests) their answers, nothing else.
         const role = roleOf(user);
-        const allowed = role === "teacher" ? "question" : role === "student" || role === "guest" ? "answer" : null;
-        if (purpose !== allowed) return yield* new Forbidden({ message: "Your role can't upload that kind of image." });
+        const allowed: AssetItem["purpose"][] = role === "teacher" ? ["question", "post"] : role === "student" || role === "guest" ? ["answer"] : [];
+        if (!allowed.includes(purpose)) return yield* new Forbidden({ message: "Your role can't upload that kind of file." });
+        // Images are for questions and answers, documents for posts.
+        const isFile = purpose === "post";
+        const isImage = (assetMimes as readonly string[]).includes(mime);
+        if (isFile ? !(fileMimes as readonly string[]).includes(mime) : !isImage)
+          return yield* new Conflict({ message: isFile ? "Attach a PDF, Word, Excel or PowerPoint file." : "Use a PNG, JPEG, WebP or GIF image." });
+        const name = isFile ? cleanFileName(fileName ?? "") : null;
+        if (isFile && (!name || fileMimeOf(name) !== mime)) return yield* new Conflict({ message: "That file's name doesn't match its type." });
+        const limit = isFile ? maxFileBytes : maxAssetBytes;
         // A guest has no organization of their own: the one of their roster entry (none in a personal-space game).
         const organizationId = user.organization?.id ?? (role === "guest" ? yield* repo.guestOrganization(user.id) : null);
-        if (size < 1 || size > maxAssetBytes) return yield* new Conflict({ message: "Images can be up to 5 MB." });
+        if (size < 1 || size > limit) return yield* new Conflict({ message: isFile ? "Files can be up to 10 MB." : "Images can be up to 5 MB." });
         const id = newId("asset");
         const key = `${purpose}/${user.id}/${id}`;
-        const target = yield* storage.presignUpload(key, mime);
-        yield* repo.insert({ id, ownerId: user.id, organizationId, purpose, s3Key: key, mime });
+        const target = yield* storage.presignUpload(key, mime, limit);
+        yield* repo.insert({ id, ownerId: user.id, organizationId, purpose, s3Key: key, mime, fileName: name });
         return { assetId: id, ...target };
       });
 
       const confirm = Effect.fn("Assets.confirm")(function* (user: SessionUser, assetId: string) {
         const row = yield* repo.findOwned(assetId, { id: user.id, organizationId: user.organization?.id ?? null });
         if (!row) return yield* new NotFound({ message: "That upload doesn't exist." });
-        if (row.status === "ready" && row.sizeBytes !== null && row.width !== null && row.height !== null)
+        const isFile = row.purpose === "post";
+        if (row.status === "ready" && row.sizeBytes !== null && (isFile || (row.width !== null && row.height !== null)))
           return { assetId, sizeBytes: row.sizeBytes, width: row.width, height: row.height };
         // Counts how each real confirmation ended (ok, or why it was refused), by what the image is for.
         return yield* Effect.gen(function* () {
-          const bytes = yield* storage.read(row.s3Key);
+          const bytes = yield* storage.read(row.s3Key, isFile ? maxFileBytes : maxAssetBytes);
           if (!bytes) return yield* new Conflict({ message: "The file wasn't uploaded." });
+          if (isFile) {
+            // The bytes must begin like the type the file claimed (PDF, ZIP package or OLE file).
+            if (!fileLooksLike(row.mime as FileMime, bytes)) {
+              yield* storage.remove([row.s3Key]);
+              yield* repo.remove([assetId]);
+              return yield* new Conflict({ message: "That file isn't a valid PDF, Word, Excel or PowerPoint file." });
+            }
+            const sha256 = createHash("sha256").update(bytes).digest("hex");
+            yield* repo.markReady(assetId, { sizeBytes: bytes.length, width: null, height: null, sha256 });
+            return { assetId, sizeBytes: bytes.length, width: null, height: null };
+          }
           const info = imageInfo(bytes);
           if (!info || info.mime !== row.mime) {
             // Not what it claimed to be: nothing keeps it.
