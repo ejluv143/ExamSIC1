@@ -5,7 +5,8 @@ import type { Question, StudentQuestion } from "./question.ts";
 
 // `question`: a teacher's image in a prompt, choice, background or paper header logo. `answer`: a student's drawing
 // or photo.
-export const assetPurposes = ["question", "answer"] as const;
+// `post`: a file a teacher attaches to a class announcement (a PDF or a Word, Excel or PowerPoint file).
+export const assetPurposes = ["question", "answer", "post"] as const;
 export const AssetPurpose = Schema.Literals(assetPurposes);
 export type AssetPurpose = typeof AssetPurpose.Type;
 
@@ -14,6 +15,53 @@ export const AssetMime = Schema.Literals(assetMimes);
 export type AssetMime = typeof AssetMime.Type;
 
 export const maxAssetBytes = 5 * 1024 * 1024;
+
+// The documents a teacher may attach to a post, by file extension. Macro-enabled formats (.docm, .xlsm, .pptm) and
+// anything that runs or renders in a browser (html, svg) are left out on purpose.
+export const fileTypes = {
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+} as const;
+export const fileMimes = [
+  fileTypes.pdf,
+  fileTypes.doc,
+  fileTypes.docx,
+  fileTypes.xls,
+  fileTypes.xlsx,
+  fileTypes.ppt,
+  fileTypes.pptx,
+] as const;
+export const FileMime = Schema.Literals(fileMimes);
+export type FileMime = typeof FileMime.Type;
+export const maxFileBytes = 10 * 1024 * 1024;
+// What `accept` on a file input takes.
+export const fileAccept = Object.keys(fileTypes).map((e) => `.${e}`).join(",");
+
+// The type of a file from its name's extension, or null when it isn't one of `fileTypes`. Browsers often give an
+// Office file no type at all, so the extension is what decides.
+export function fileMimeOf(name: string): FileMime | null {
+  const ext = name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  return ext && ext in fileTypes ? fileTypes[ext as keyof typeof fileTypes] : null;
+}
+
+// A file name made safe to store and send in a header: no folders, no control characters, at most 150 characters.
+export const cleanFileName = (name: string): string =>
+  // eslint-disable-next-line no-control-regex
+  name.replace(/^.*[\\/]/, "").replace(/[\u0000-\u001f\u007f"]/g, "").trim().slice(-150);
+
+// Whether the bytes begin like the file type they claim: PDF, a ZIP package (the OOXML formats) or an OLE
+// compound file (the older Office formats).
+export function fileLooksLike(mime: FileMime, bytes: Uint8Array): boolean {
+  const starts = (...sig: number[]) => sig.every((b, i) => bytes[i] === b);
+  if (mime === fileTypes.pdf) return starts(0x25, 0x50, 0x44, 0x46, 0x2d);
+  if (mime === fileTypes.doc || mime === fileTypes.xls || mime === fileTypes.ppt) return starts(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
+  return starts(0x50, 0x4b, 0x03, 0x04);
+}
 
 // The markdown reference to an uploaded image: `![alt](asset:<id>)`.
 export const assetUrlPrefix = "asset:";

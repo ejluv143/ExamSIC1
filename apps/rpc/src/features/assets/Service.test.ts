@@ -52,7 +52,7 @@ type Options = {
 const setup = (options: Options = {}) => {
   const rows = new Map((options.rows ?? []).map((r) => [r.id, r]));
   const inserted: NewAssetRow[] = [];
-  const ready: Array<[string, { sizeBytes: number; width: number; height: number; sha256: string }]> = [];
+  const ready: Array<[string, { sizeBytes: number; width: number | null; height: number | null; sha256: string }]> = [];
   const removedRows: string[] = [];
   const removedFiles: string[] = [];
   const lookups: string[] = [];
@@ -275,6 +275,66 @@ describe("Assets.confirm", () => {
     const confirmed = await run(Effect.flatMap(assets, (a) => a.confirm(teacher, assetId(6))));
     expect(confirmed).toEqual({ assetId: assetId(6), sizeBytes: 321, width: 7, height: 9 });
     expect(ready).toEqual([]);
+  });
+});
+
+describe("post files", () => {
+  const docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
+  const pendingFile = assetRow({
+    id: assetId(7),
+    ownerId: "teacher-1",
+    purpose: "post",
+    mime: docx,
+    fileName: "Syllabus.docx",
+    status: "pending",
+    sizeBytes: null,
+    width: null,
+    height: null,
+    sha256: null,
+    s3Key: "k7",
+  });
+
+  test("a teacher may attach a Word file to a post; students may not, and an image can't be a post file", async () => {
+    const { run, fail, inserted } = setup();
+    await run(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 1000, "Syllabus.docx")));
+    expect(inserted[0]).toMatchObject({ purpose: "post", fileName: "Syllabus.docx", mime: docx });
+    const student403 = await fail(Effect.flatMap(assets, (a) => a.createUpload(student, "post", docx, 1000, "Syllabus.docx")));
+    const image = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", "image/png", 1000, "a.png")));
+    const asQuestion = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "question", docx, 1000, "Syllabus.docx")));
+    expect([student403._tag, image._tag, asQuestion._tag]).toEqual(["Forbidden", "Conflict", "Conflict"]);
+  });
+
+  test("the file's name must match its type, and files can be up to 10 MB", async () => {
+    const { fail, run } = setup();
+    const mismatch = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 1000, "Syllabus.pdf")));
+    const noName = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 1000)));
+    const huge = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 11 * 1024 * 1024, "Syllabus.docx")));
+    expect([mismatch._tag, noName._tag, huge._tag]).toEqual(["Conflict", "Conflict", "Conflict"]);
+    // Over the image limit, within the file limit.
+    const ok = await run(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 7 * 1024 * 1024, "Syllabus.docx")));
+    expect(ok.assetId).toMatch(/^asset-/);
+  });
+
+  test("a file that doesn't begin like its type is deleted; a genuine one is marked ready without dimensions", async () => {
+    const bad = setup({ rows: [pendingFile], files: { k7: new TextEncoder().encode("<html>not a docx</html>") } });
+    const err = await bad.fail(Effect.flatMap(assets, (a) => a.confirm(teacher, assetId(7))));
+    expect(err._tag).toBe("Conflict");
+    expect(bad.removedRows).toEqual([assetId(7)]);
+
+    const good = setup({ rows: [pendingFile], files: { k7: zip } });
+    const info = await good.run(Effect.flatMap(assets, (a) => a.confirm(teacher, assetId(7))));
+    expect(info).toMatchObject({ assetId: assetId(7), sizeBytes: 8, width: null, height: null });
+    expect(good.ready[0]![1]).toMatchObject({ width: null, height: null });
+  });
+
+  test("a post's file is only visible to whoever uploaded it, even if its id turns up in someone else's content", async () => {
+    const file = { ...pendingFile, status: "ready" as const, sizeBytes: 8 };
+    const { run } = setup({ rows: [file], teacherText: { question: assetId(7), answer: assetId(7) } });
+    const other = await run(Effect.flatMap(assets, (a) => a.visible(otherTeacher, [assetId(7)])));
+    const owner = await run(Effect.flatMap(assets, (a) => a.visible(teacher, [assetId(7)])));
+    expect(other).toEqual([]);
+    expect(owner.map((a) => a.id)).toEqual([assetId(7)]);
   });
 });
 

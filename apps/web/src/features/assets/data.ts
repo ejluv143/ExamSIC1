@@ -1,16 +1,16 @@
 // Images through the API: signed-in teachers upload question images and students their answers straight to S3
 // (the API only issues the presigned POST and checks the file afterwards); URLs to view them are short-lived.
 import "server-only";
-import type { AssetMime, AssetPurpose } from "@examinus/domain/asset";
+import type { AssetMime, AssetPurpose, FileMime } from "@examinus/domain/asset";
 import { Result } from "effect";
 import { headers } from "next/headers";
 import { callApi, forwardedHeaders } from "@/lib/api/client";
 import { requirePermission } from "@/lib/auth/dal";
 import { write } from "@/lib/api/helpers";
 
-export async function requestUpload(purpose: AssetPurpose, mime: AssetMime, size: number) {
+export async function requestUpload(purpose: AssetPurpose, mime: AssetMime | FileMime, size: number, fileName?: string) {
   await requirePermission({ asset: ["create"] });
-  return write((api) => api["asset.createUpload"]({ purpose, mime, size }));
+  return write((api) => api["asset.createUpload"]({ purpose, mime, size, ...(fileName === undefined ? {} : { fileName }) }));
 }
 
 export async function confirmUpload(assetId: string) {

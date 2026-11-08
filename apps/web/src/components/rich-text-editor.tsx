@@ -278,6 +278,9 @@ const tools: Tool[] = [
   },
 ];
 
+// The short toolbar of `simple`: what an announcement needs, without code, math or pictures.
+const simpleLabels = new Set(["Bold", "Italic", "Bulleted list", "Numbered list", "Link"]);
+
 const noAssetUrls: Record<string, string> = {};
 const imageFile = (files: FileList | undefined | null) => [...(files ?? [])].find((f) => f.type.startsWith("image/"));
 
@@ -290,6 +293,7 @@ export function RichTextEditor({
   blanks,
   assetUrls,
   images,
+  simple,
   onUnsupported,
 }: {
   value: string;
@@ -300,6 +304,8 @@ export function RichTextEditor({
   blanks?: boolean;
   assetUrls?: Record<string, string>;
   images?: boolean;
+  // Only bold, italic, lists and links in the toolbar.
+  simple?: boolean;
   // The text uses markdown this editor can't show (it would change on the way back): the caller switches to markdown.
   onUnsupported?: () => void;
 }) {
@@ -405,7 +411,8 @@ export function RichTextEditor({
           aria-label={`Formatting for ${label}`}
           className="flex flex-wrap items-center gap-0.5 border-b border-border px-1.5 py-1"
         >
-          {tools.map((tool, i) => (
+          {tools.map((tool, i) =>
+            simple && !simpleLabels.has(tool.label) ? null : (
             <button
               key={tool.label}
               type="button"
@@ -419,7 +426,8 @@ export function RichTextEditor({
             >
               <tool.icon className="size-4" aria-hidden />
             </button>
-          ))}
+            ),
+          )}
           {blanks && (
             <button
               type="button"

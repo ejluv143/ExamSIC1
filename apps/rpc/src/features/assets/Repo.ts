@@ -12,6 +12,7 @@ import {
   assets,
   attempts,
   bankQuestions,
+  classAnnouncements,
   classes,
   questions,
   quizParts,
@@ -30,6 +31,7 @@ export type NewAssetRow = {
   purpose: AssetItem["purpose"];
   s3Key: string;
   mime: AssetItem["mime"];
+  fileName?: string | null;
 };
 
 const mentionsAsset = (column: SQLWrapper) => sql`${column}::text like '%asset-%'`;
@@ -65,7 +67,7 @@ export class AssetRepo extends Context.Service<
     readonly guestOrganization: (userId: string) => Effect.Effect<string | null>;
     readonly markReady: (
       assetId: string,
-      file: { sizeBytes: number; width: number; height: number; sha256: string },
+      file: { sizeBytes: number; width: number | null; height: number | null; sha256: string },
     ) => Effect.Effect<void>;
     readonly remove: (assetIds: readonly string[]) => Effect.Effect<void>;
     // The confirmed assets among `ids`, of that organization; `null` (guests and platform admins, who have none) filters nothing.
@@ -195,6 +197,10 @@ export class AssetRepo extends Context.Service<
               await quizText(d, undefined),
               ...(await d.select({ text: classes.headerImage }).from(classes).where(isNotNull(classes.headerImage))).map((r) => r.text ?? ""),
               ...(await d.select({ text: sql<string>`${bankQuestions.question}::text` }).from(bankQuestions)).map((r) => r.text),
+              // Files attached to class posts.
+              ...(
+                await d.select({ text: sql<string>`${classAnnouncements.attachments}::text` }).from(classAnnouncements).where(mentionsAsset(classAnnouncements.attachments))
+              ).map((r) => r.text),
               ...(
                 await d.select({ text: sql<string>`${answers.value}::text` }).from(answers).where(mentionsAsset(answers.value))
               ).map((r) => r.text),

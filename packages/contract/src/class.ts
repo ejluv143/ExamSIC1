@@ -29,6 +29,12 @@ export class ClassRpcs extends RpcGroup.make(
     success: Announcement,
     error: Schema.Union([Forbidden, NotFound]),
   }),
+  // Changes a post's text, title, deadline and attachments; its kind stays (NotFound when `post.kind` isn't it).
+  Rpc.make("updateAnnouncement", {
+    payload: { ...ClassId, announcementId: Schema.String, post: PostFields },
+    success: Announcement,
+    error: Schema.Union([Forbidden, NotFound]),
+  }),
   Rpc.make("deleteAnnouncement", {
     payload: { ...ClassId, announcementId: Schema.String },
     error: Schema.Union([Forbidden, NotFound]),

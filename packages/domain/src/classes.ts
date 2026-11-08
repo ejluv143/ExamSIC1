@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { assetIdOfRef, assetIdsIn, assetRef, cleanFileName, fileMimeOf } from "./asset.ts";
 import { sexNames, subjectAreaNames } from "./roles.ts";
 
 export const SubjectAreaSchema = Schema.Literals(subjectAreaNames);
@@ -86,6 +87,48 @@ export type RosterStudent = typeof RosterStudent.Type;
 export const PostKind = Schema.Literals(["announcement", "assignment", "activity"]);
 export type PostKind = typeof PostKind.Type;
 
+// Something a post points to: a web page, a YouTube video or a Google Drive file, each by its address, or a file
+// the teacher uploaded (its `url` is then `asset:<id>` and its `title` the file's name).
+export const attachmentKinds = ["link", "youtube", "drive", "file"] as const;
+export const Attachment = Schema.Struct({
+  kind: Schema.Literals(attachmentKinds),
+  url: Schema.String,
+  title: Schema.String,
+});
+export type Attachment = typeof Attachment.Type;
+export const maxAttachments = 10;
+
+const hostIs = (host: string, ...names: string[]) => names.some((n) => host === n || host.endsWith(`.${n}`));
+
+// A clean attachment from what a teacher typed, or null when its address isn't an http(s) page of the right
+// site (a YouTube link must be on youtube.com or youtu.be, a Drive one on drive.google.com or docs.google.com).
+export function cleanAttachment(kind: Attachment["kind"], rawUrl: string, rawTitle = ""): Attachment | null {
+  if (kind === "file") {
+    const id = assetIdOfRef(rawUrl.trim());
+    const title = cleanFileName(rawTitle);
+    return id && assetIdsIn(id)[0] === id && fileMimeOf(title) ? { kind, url: assetRef(id), title } : null;
+  }
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username || url.password) return null;
+  const host = url.hostname.toLowerCase();
+  if (kind === "youtube" && !hostIs(host, "youtube.com", "youtu.be")) return null;
+  if (kind === "drive" && !hostIs(host, "drive.google.com", "docs.google.com")) return null;
+  return { kind, url: url.toString(), title: rawTitle.trim().slice(0, 150) || url.hostname.replace(/^www\./, "") };
+}
+
+// One row of an assignment's rubric: what is judged and how many points it is worth.
+export const RubricRow = Schema.Struct({ criterion: Schema.String, points: Schema.Int });
+export type RubricRow = typeof RubricRow.Type;
+export const maxRubricRows = 20;
+export const maxPostPoints = 1000;
+export const maxTimeLimitMinutes = 600;
+
 export const Announcement = Schema.Struct({
   id: Schema.String,
   kind: PostKind,
@@ -94,6 +137,12 @@ export const Announcement = Schema.Struct({
   body: Schema.String,
   // When an assignment or activity is due (ISO), if it has a deadline.
   dueAt: Schema.NullOr(Schema.String),
+  attachments: Schema.Array(Attachment),
+  // Assignments only: what it is worth (the rubric's total when it has one), how long students get once they
+  // start (minutes), and the rubric.
+  points: Schema.NullOr(Schema.Int),
+  timeLimitMinutes: Schema.NullOr(Schema.Int),
+  rubric: Schema.Array(RubricRow),
   createdAt: Schema.String,
 });
 export type Announcement = typeof Announcement.Type;
@@ -107,5 +156,10 @@ export const PostFields = Schema.Struct({
   title: PostTitle,
   body: AnnouncementBody,
   dueAt: Schema.NullOr(Schema.String),
+  attachments: Schema.Array(Attachment),
+  // Left out by clients that don't set them; only an assignment keeps them.
+  points: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  timeLimitMinutes: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  rubric: Schema.optionalKey(Schema.Array(RubricRow)),
 });
 export type PostFields = typeof PostFields.Type;

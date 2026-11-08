@@ -1,5 +1,6 @@
 // An organization's classes, and the students on their rosters. Students join a class with its code; a roster entry
 // can also come from Google Classroom or the demo data without an account behind it.
+import type { Attachment, RubricRow } from "@examinus/domain/classes";
 import type { AttendanceStatus } from "@examinus/domain/attendance";
 import type { ClassRecord } from "@examinus/contract/class-record";
 import { sexNames, subjectAreaNames } from "@examinus/domain/roles";
@@ -142,6 +143,12 @@ export const classAnnouncements = pgTable(
     title: text("title").notNull().default(""),
     body: text("body").notNull().default(""),
     dueAt: timestamptz("due_at"),
+    // Links, YouTube videos and Drive files the post points to (see `Attachment` in the domain package).
+    attachments: jsonb("attachments").$type<Attachment[]>().notNull().default(sql`'[]'::jsonb`),
+    // Assignments: points, a time limit in minutes and a rubric (rows of criterion and points).
+    points: integer("points"),
+    timeLimitMinutes: integer("time_limit_minutes"),
+    rubric: jsonb("rubric").$type<RubricRow[]>().notNull().default(sql`'[]'::jsonb`),
     createdAt: createdAt(),
   },
   (t) => [index("class_announcements_class_id_idx").on(t.classId, t.createdAt)],
