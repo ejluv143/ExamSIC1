@@ -213,7 +213,7 @@ export default async function StudentClassPage(props: PageProps<"/student/classe
             <NewAnnouncementButton post={postMyAnnouncementAction.bind(null, cls.id)} classTitle={cls.title} />
             {announcements.length === 0 ? (
               <Card>
-                <EmptyState title="This is where you'll see announcements">Your teacher's posts show up here.</EmptyState>
+                <EmptyState title="This is where you'll see announcements">Your teacher&apos;s posts show up here.</EmptyState>
               </Card>
             ) : (
               announcements.map((a) => (
