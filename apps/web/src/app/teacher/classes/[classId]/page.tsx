@@ -244,7 +244,9 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{a.title}</span>
+                    <Link href={`/teacher/classes/${cls.id}/work/${a.id}`} className="block truncate font-medium hover:text-primary hover:underline">
+                      {a.title}
+                    </Link>
                     <span className="block text-sm text-muted">
                       {a.dueAt ? `Due ${formatDateTime(a.dueAt)}` : `Posted ${formatDateTime(a.createdAt)}`}
                       {a.points != null && ` · ${a.points} pts`}
@@ -257,10 +259,10 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                 </li>
               ))}
               {sessions.map(({ session, quizTitle }) => (
-                <li key={session.id}>
+                <li key={session.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <Link
                     href={`/teacher/assessments/${session.quizId}/sessions/${session.id}`}
-                    className="flex items-center gap-4 rounded-lg px-2 py-3.5 hover:bg-surface-muted"
+                    className="flex min-w-0 flex-1 items-center gap-4 rounded-lg px-2 py-3.5 hover:bg-surface-muted"
                   >
                     <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
                       <ClipboardList className="size-5" aria-hidden />
@@ -274,13 +276,18 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                     <ModeBadge mode={session.mode} />
                     <StatusBadge status={session.status} />
                   </Link>
+                  {session.status === "ended" && (
+                    <ButtonLink href={`/teacher/grading/${session.id}`} variant="secondary" className="shrink-0 text-xs">
+                      <ClipboardCheck className="size-3.5" aria-hidden /> Review answers
+                    </ButtonLink>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
           {/* Left column: class code, upcoming, Classroom link */}
           <aside className="space-y-4 self-start">
             <Card className="p-4">
@@ -377,7 +384,7 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                       <div className="min-w-0 flex-1">
                         <p className="font-medium">
                           {item.announcement.kind === "announcement"
-                            ? "You"
+                            ? item.announcement.authorName || "You"
                             : `You posted a new ${item.announcement.kind}: ${item.announcement.title}`}
                         </p>
                         <p className="text-sm text-muted">
@@ -397,6 +404,11 @@ export default async function ClassPage(props: PageProps<"/teacher/classes/[clas
                     )}
                     <PostDetails post={item.announcement} />
                     <AttachmentList attachments={item.announcement.attachments} />
+                    {item.announcement.kind !== "announcement" && (
+                      <Link href={`/teacher/classes/${cls.id}/work/${item.announcement.id}`} className="mt-3 inline-block text-sm font-medium text-primary hover:underline">
+                        View student work
+                      </Link>
+                    )}
                   </Card>
                 ) : (
                   <SessionPost key={item.session.id} item={item} />
@@ -457,6 +469,14 @@ function SessionPost({ item }: { item: { session: SessionListItem["session"]; qu
           </p>
         )}
       </Link>
+      {session.status === "ended" && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5">
+          <p className="text-sm text-muted">Finished. Go through each student&apos;s answers and score them.</p>
+          <ButtonLink href={`/teacher/grading/${session.id}`} variant="secondary">
+            <ClipboardCheck className="size-4" aria-hidden /> Review answers
+          </ButtonLink>
+        </div>
+      )}
     </Card>
   );
 }

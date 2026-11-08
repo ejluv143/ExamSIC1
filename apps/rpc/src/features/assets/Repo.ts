@@ -13,12 +13,15 @@ import {
   attempts,
   bankQuestions,
   classAnnouncements,
+  classMembers,
   classes,
+  postSubmissions,
   questions,
   quizParts,
   quizSessions,
   quizzes,
   sessionStudents,
+  studentProfiles,
   students,
   type AssetItem,
   type QuizSessionItem,
@@ -81,6 +84,10 @@ export class AssetRepo extends Context.Service<
     readonly rosterSessions: (studentId: string) => Effect.Effect<QuizSessionItem[]>;
     // The text of the quizzes' content.
     readonly quizText: (quizIds: readonly string[]) => Effect.Effect<string>;
+    // The attachments of work students turned in to the teacher's classes: only that teacher may see those files.
+    readonly submissionText: (teacherId: string) => Effect.Effect<string>;
+    // The attachments of the posts in the classes a student belongs to.
+    readonly memberPostText: (userId: string) => Effect.Effect<string>;
     // Every asset created before the cutoff.
     readonly createdBefore: (cutoff: Date) => Effect.Effect<AssetItem[]>;
     // The ids of the assets that any question, bank entry or answer refers to.
@@ -187,6 +194,30 @@ export class AssetRepo extends Context.Service<
           return yield* db.query((d) => quizText(d, inArray(quizzes.id, [...quizIds])));
         }),
 
+        submissionText: Effect.fn("AssetRepo.submissionText")(function* (teacherId) {
+          const rows = yield* db.query((d) =>
+            d
+              .select({ text: sql<string>`${postSubmissions.attachments}::text` })
+              .from(postSubmissions)
+              .innerJoin(classAnnouncements, eq(classAnnouncements.id, postSubmissions.announcementId))
+              .innerJoin(classes, eq(classes.id, classAnnouncements.classId))
+              .where(eq(classes.teacherId, teacherId)),
+          );
+          return rows.map((r) => r.text).join("\n");
+        }),
+
+        memberPostText: Effect.fn("AssetRepo.memberPostText")(function* (userId) {
+          const rows = yield* db.query((d) =>
+            d
+              .select({ text: sql<string>`${classAnnouncements.attachments}::text` })
+              .from(classAnnouncements)
+              .innerJoin(classMembers, eq(classMembers.classId, classAnnouncements.classId))
+              .innerJoin(students, eq(students.id, classMembers.studentId))
+              .where(eq(students.userId, userId)),
+          );
+          return rows.map((r) => r.text).join("\n");
+        }),
+
         createdBefore: Effect.fn("AssetRepo.createdBefore")(function* (cutoff) {
           return yield* db.query((d) => d.select().from(assets).where(lt(assets.createdAt, cutoff)));
         }),
@@ -197,6 +228,13 @@ export class AssetRepo extends Context.Service<
               await quizText(d, undefined),
               ...(await d.select({ text: classes.headerImage }).from(classes).where(isNotNull(classes.headerImage))).map((r) => r.text ?? ""),
               ...(await d.select({ text: sql<string>`${bankQuestions.question}::text` }).from(bankQuestions)).map((r) => r.text),
+              // A student's picture and signature.
+              ...(await d.select({ text: studentProfiles.picture }).from(studentProfiles).where(isNotNull(studentProfiles.picture))).map((r) => r.text ?? ""),
+              ...(await d.select({ text: studentProfiles.signature }).from(studentProfiles).where(isNotNull(studentProfiles.signature))).map((r) => r.text ?? ""),
+              // Files students turned in.
+              ...(
+                await d.select({ text: sql<string>`${postSubmissions.attachments}::text` }).from(postSubmissions).where(mentionsAsset(postSubmissions.attachments))
+              ).map((r) => r.text),
               // Files attached to class posts.
               ...(
                 await d.select({ text: sql<string>`${classAnnouncements.attachments}::text` }).from(classAnnouncements).where(mentionsAsset(classAnnouncements.attachments))

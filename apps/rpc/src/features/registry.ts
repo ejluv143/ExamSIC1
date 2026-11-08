@@ -55,7 +55,12 @@ import { Membership } from "./organization/Membership.ts";
 import { OrganizationHandlers } from "./organization/Handlers.ts";
 import { OrganizationRepo } from "./organization/Repo.ts";
 import { OrganizationService } from "./organization/Service.ts";
+import { ProfileHandlers } from "./profile/Handlers.ts";
+import { ProfileRepo } from "./profile/Repo.ts";
 import { QuizHandlers } from "./quiz/Handlers.ts";
+import { WorkHandlers } from "./submissions/Handlers.ts";
+import { SubmissionRepo } from "./submissions/Repo.ts";
+import { SubmissionService } from "./submissions/Service.ts";
 import { QuizRepo } from "./quiz/Repo.ts";
 import { QuizService } from "./quiz/Service.ts";
 import { ClassRecordHandlers } from "./records/Handlers.ts";
@@ -134,6 +139,10 @@ const live = feature({
 });
 const mastery = feature({ repo: MasteryRepo.layer, services: MasteryService.layer, handlers: MasteryHandlers });
 const quiz = feature({ repo: QuizRepo.layer, services: QuizService.layer, handlers: QuizHandlers });
+// A student's own profile (Student Information).
+const profile = feature({ repo: ProfileRepo.layer, services: Layer.empty, handlers: ProfileHandlers });
+// Turning in work for assignments and activities, and the teacher's Student work.
+const submissions = feature({ repo: SubmissionRepo.layer, services: SubmissionService.layer, handlers: WorkHandlers });
 const records = feature({ repo: RecordsRepo.layer, services: RecordsService.layer, handlers: ClassRecordHandlers });
 // Session lifecycle, live actions and reports, and the sweep that opens, ends and submits on schedule.
 const session = feature({
@@ -149,7 +158,7 @@ const session = feature({
 // in one tier don't use each other. A feature's services and its handlers can't come as one layer: live's handlers stream
 // game views while the game publishes through LiveHub.
 const tiers = [
-  [admin, records, attendance],
+  [admin, records, attendance, profile, submissions],
   [classes],
   [organization],
   [auth],

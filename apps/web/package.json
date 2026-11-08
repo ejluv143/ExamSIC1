@@ -10,6 +10,7 @@
     "typecheck": "vinext typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@aivangogh/ph-address": "2026.2.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-java": "^6.0.2",

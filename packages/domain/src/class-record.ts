@@ -141,8 +141,8 @@ function blankTerm(term: GradingTerm): RecordCategory[] {
   const prefix = term === "midterm" ? "m" : "f";
   return [
     { id: `${prefix}-${newId()}`, name: "Quizzes", weight: 20, isExam: false, items: [] },
-    { id: `${prefix}-${newId()}`, name: "Assignments", weight: 15, isExam: false, items: [] },
-    { id: `${prefix}-${newId()}`, name: "Major Projects", weight: 15, isExam: false, items: [] },
+    { id: `${prefix}-${newId()}`, name: "Assignments", weight: 20, isExam: false, items: [] },
+    { id: `${prefix}-${newId()}`, name: "Major Projects", weight: 10, isExam: false, items: [] },
     {
       id: `${prefix}-${newId()}`,
       name: "Attendance / Participation",
@@ -342,9 +342,24 @@ export function studentStanding(input: {
   const dropped = record.dropped.includes(sid);
   const absences = terms.midterm.absences + terms.final.absences;
   const rawScore = started.length ? round2(started.reduce((n, t) => n + t.rawScore, 0) / started.length) : null;
+  // The grade sheet's own totals (FINAL-GRADE-SHEET): work that isn't recorded yet counts as zero, ADW is capped
+  // at its weight (60), the major exam is 40, and the course raw score is the average of the two terms.
+  const sheetTerm = (term: GradingTerm) => {
+    const r = termResult(record, linked, term, sid);
+    return {
+      categories: r.categories.map((c) => ({ name: c.cat.name, weight: c.cat.weight, isExam: c.cat.isExam, weighted: round2(c.weighted) })),
+      adw: r.adw,
+      exam: r.exam,
+      rawScore: r.rawScore,
+      grade: r.grade,
+    };
+  };
+  const course = courseResult(record, linked, sid);
+  const sheet = { midterm: sheetTerm("midterm"), final: sheetTerm("final"), rawScore: course.rawScore, grade: course.grade, remark: course.remark };
   return {
     attendance,
     terms,
+    sheet,
     current:
       rawScore === null
         ? null

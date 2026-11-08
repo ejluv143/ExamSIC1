@@ -1,0 +1,1 @@
+ALTER TABLE "classes" ADD COLUMN "eroom_url" text DEFAULT '' NOT NULL;

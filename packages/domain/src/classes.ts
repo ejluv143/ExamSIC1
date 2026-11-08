@@ -33,6 +33,8 @@ export const ClassInfo = Schema.Struct({
   term: Schema.String,
   schedule: Schema.String,
   room: Schema.String,
+  // The class's online room (a Meet, Zoom or Teams link), or "" when it has none.
+  eroomUrl: Schema.String,
   units: Schema.Number,
   color: Schema.NullOr(ClassColorSchema),
   headerImage: Schema.NullOr(Schema.String),
@@ -65,6 +67,8 @@ export const ClassFields = Schema.Struct({
   term: Text(60),
   schedule: Text(80),
   room: Text(60),
+  // Left out by clients that don't set it (kept when editing); "" removes it.
+  eroomUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(300), Schema.isPattern(/^(https?:\/\/\S+)?$/))),
   units: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 12 })),
   // Left out by clients that don't set one (the colour is kept when editing, and starts as the theme's).
   color: Schema.optionalKey(Schema.NullOr(ClassColorSchema)),
@@ -138,6 +142,9 @@ export const Announcement = Schema.Struct({
   // When an assignment or activity is due (ISO), if it has a deadline.
   dueAt: Schema.NullOr(Schema.String),
   attachments: Schema.Array(Attachment),
+  // Who posted it: the account id and display name ("" when unknown).
+  authorId: Schema.String,
+  authorName: Schema.String,
   // Assignments only: what it is worth (the rubric's total when it has one), how long students get once they
   // start (minutes), and the rubric.
   points: Schema.NullOr(Schema.Int),

@@ -18,7 +18,7 @@ export type ClassWithRoster = { row: ClassItem; studentIds: string[] };
 // What a post is made of once it is checked: an announcement needs text, an assignment or activity a title, a
 // deadline only goes with the latter two, and each attachment's address is checked again here (one that isn't
 // valid is refused, not dropped).
-const postValues = Effect.fn("ClassService.postValues")(function* (post: PostFields) {
+export const postValues = Effect.fn("ClassService.postValues")(function* (post: PostFields) {
   const body = post.body.trim();
   const title = post.kind === "announcement" ? "" : post.title.trim();
   if (post.kind === "announcement" ? !body : !title)
@@ -68,7 +68,7 @@ export class ClassService extends Context.Service<
     readonly membership: (userId: string, classId: string) => Effect.Effect<{ cls: ClassItem; studentId: string } | null>;
     readonly list: (actor: Actor) => Effect.Effect<ClassWithRoster[]>;
     // The class's announcements, newest first.
-    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<AnnouncementItem[], NotFound>;
+    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<(AnnouncementItem & { authorName: string })[], NotFound>;
     readonly postAnnouncement: (actor: Actor, classId: string, post: PostFields) => Effect.Effect<AnnouncementItem, NotFound>;
     readonly updateAnnouncement: (
       actor: Actor,

@@ -5,7 +5,7 @@ import type { AttendanceStatus } from "@examinus/domain/attendance";
 import type { ClassRecord } from "@examinus/contract/class-record";
 import { sexNames, subjectAreaNames } from "@examinus/domain/roles";
 import { sql } from "drizzle-orm";
-import { date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { createdAt, timestamps, timestamptz } from "./_helpers.ts";
 import { users } from "./auth.ts";
 import { organizations } from "./organizations.ts";
@@ -30,6 +30,8 @@ export const classes = pgTable(
     term: text("term").notNull().default(""),
     schedule: text("schedule").notNull().default(""),
     room: text("room").notNull().default(""),
+    // The class's online room link (Meet, Zoom, Teams); "" when it has none.
+    eroomUrl: text("eroom_url").notNull().default(""),
     units: integer("units").notNull().default(3),
     // One of the names in `classColors` (packages/domain); null: the theme's colour.
     color: text("color"),
@@ -149,8 +151,34 @@ export const classAnnouncements = pgTable(
     points: integer("points"),
     timeLimitMinutes: integer("time_limit_minutes"),
     rubric: jsonb("rubric").$type<RubricRow[]>().notNull().default(sql`'[]'::jsonb`),
+    // Assignments and activities: whether students can still turn work in.
+    acceptingSubmissions: boolean("accepting_submissions").notNull().default(true),
     createdAt: createdAt(),
   },
   (t) => [index("class_announcements_class_id_idx").on(t.classId, t.createdAt)],
 );
 export type AnnouncementItem = typeof classAnnouncements.$inferSelect;
+
+// A student's work on an assignment or activity. One row per post and student, made the first time they turn in.
+export const postSubmissions = pgTable(
+  "post_submissions",
+  {
+    id: text("id").primaryKey(),
+    announcementId: text("announcement_id")
+      .notNull()
+      .references(() => classAnnouncements.id, { onDelete: "cascade" }),
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    // Files (`asset:<id>`), links, videos and Drive files, like a post's.
+    attachments: jsonb("attachments").$type<Attachment[]>().notNull().default(sql`'[]'::jsonb`),
+    // Null: not turned in (or taken back).
+    turnedInAt: timestamptz("turned_in_at"),
+    score: integer("score"),
+    // Null: the student doesn't see the score yet.
+    returnedAt: timestamptz("returned_at"),
+    ...timestamps,
+  },
+  (t) => [unique("post_submissions_post_student_unique").on(t.announcementId, t.studentId)],
+);
+export type SubmissionItem = typeof postSubmissions.$inferSelect;

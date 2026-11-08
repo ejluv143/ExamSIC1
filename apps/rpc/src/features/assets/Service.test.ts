@@ -40,6 +40,9 @@ type Options = {
   // What the repo says teacher-1's quizzes and bank contain, and what the student's sessions' quizzes contain.
   teacherText?: { question: string; answer: string };
   quizText?: string;
+  // The attachments of the posts in the student's classes, and of the work turned in to the teacher's classes.
+  memberPostText?: string;
+  submissionText?: string;
   rosterSessions?: QuizSessionItem[];
   files?: Record<string, Uint8Array>;
   configured?: boolean;
@@ -70,6 +73,8 @@ const setup = (options: Options = {}) => {
       teacherText: () => Effect.sync(() => (lookups.push("teacherText"), options.teacherText ?? { question: "", answer: "" })),
       rosterSessions: () => Effect.sync(() => (lookups.push("rosterSessions"), options.rosterSessions ?? [])),
       quizText: (quizIds) => Effect.sync(() => (lookups.push(`quizText:${quizIds.join(",")}`), options.quizText ?? "")),
+      memberPostText: () => Effect.sync(() => options.memberPostText ?? ""),
+      submissionText: () => Effect.sync(() => options.submissionText ?? ""),
       paperAssets: (_studentId, ids) => Effect.succeed(ids.flatMap((id) => rows.get(id) ?? [])),
       insert: (row) => Effect.sync(() => void inserted.push(row)),
       findOwned: (id, owner) => {
@@ -295,11 +300,13 @@ describe("post files", () => {
     s3Key: "k7",
   });
 
-  test("a teacher may attach a Word file to a post; students may not, and an image can't be a post file", async () => {
+  test("a teacher or a student may attach a Word file to a post; guests may not, and an image can't be a post file", async () => {
     const { run, fail, inserted } = setup();
     await run(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", docx, 1000, "Syllabus.docx")));
     expect(inserted[0]).toMatchObject({ purpose: "post", fileName: "Syllabus.docx", mime: docx });
-    const student403 = await fail(Effect.flatMap(assets, (a) => a.createUpload(student, "post", docx, 1000, "Syllabus.docx")));
+    await run(Effect.flatMap(assets, (a) => a.createUpload(student, "post", docx, 1000, "Notes.docx")));
+    expect(inserted[1]).toMatchObject({ purpose: "post", fileName: "Notes.docx" });
+    const student403 = await fail(Effect.flatMap(assets, (a) => a.createUpload(guest, "post", docx, 1000, "Syllabus.docx")));
     const image = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "post", "image/png", 1000, "a.png")));
     const asQuestion = await fail(Effect.flatMap(assets, (a) => a.createUpload(teacher, "question", docx, 1000, "Syllabus.docx")));
     expect([student403._tag, image._tag, asQuestion._tag]).toEqual(["Forbidden", "Conflict", "Conflict"]);
@@ -335,6 +342,39 @@ describe("post files", () => {
     const owner = await run(Effect.flatMap(assets, (a) => a.visible(teacher, [assetId(7)])));
     expect(other).toEqual([]);
     expect(owner.map((a) => a.id)).toEqual([assetId(7)]);
+  });
+});
+
+describe("post files and turned-in work", () => {
+  const file = assetRow({
+    id: assetId(7),
+    ownerId: "teacher-1",
+    purpose: "post",
+    mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    fileName: "Syllabus.docx",
+    status: "ready",
+    sizeBytes: 8,
+    width: null,
+    height: null,
+    s3Key: "k7",
+  });
+
+  test("a student sees a file their classes' posts attach, but not another file", async () => {
+    const { run } = setup({ rows: [file], memberPostText: JSON.stringify([{ kind: "file", url: `asset:${assetId(7)}` }]) });
+    expect((await run(Effect.flatMap(assets, (a) => a.visible(student, [assetId(7)])))).map((r) => r.id)).toEqual([assetId(7)]);
+    const none = setup({ rows: [file] });
+    expect(await none.run(Effect.flatMap(assets, (a) => a.visible(student, [assetId(7)])))).toEqual([]);
+  });
+
+  test("a file a student turned in is visible to the class's teacher, not to a classmate or another teacher", async () => {
+    const turned = { ...file, ownerId: "student-2" };
+    const { run } = setup({ rows: [turned], submissionText: JSON.stringify([{ kind: "file", url: `asset:${assetId(7)}` }]) });
+    expect((await run(Effect.flatMap(assets, (a) => a.visible(teacher, [assetId(7)])))).map((r) => r.id)).toEqual([assetId(7)]);
+    // A classmate only gets class posts' files (memberPostText), never a submission.
+    expect(await run(Effect.flatMap(assets, (a) => a.visible(student, [assetId(7)])))).toEqual([]);
+    // Another teacher: the repo only reports submissions to the classes of the teacher asked about; none here.
+    const elsewhere = setup({ rows: [turned] });
+    expect(await elsewhere.run(Effect.flatMap(assets, (a) => a.visible(otherTeacher, [assetId(7)])))).toEqual([]);
   });
 });
 

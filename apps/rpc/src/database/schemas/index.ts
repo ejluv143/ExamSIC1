@@ -4,3 +4,4 @@ export * from "./oauth.ts";
 export * from "./organizations.ts";
 export * from "./classes.ts";
 export * from "./quiz.ts";
+export * from "./profile.ts";

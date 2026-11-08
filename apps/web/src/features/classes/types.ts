@@ -11,6 +11,8 @@ export type Class = {
   term: string;
   schedule: string;
   room: string;
+  // The online room link; "" when the class has none.
+  eroomUrl: string;
   units: number;
   // The class's banner colour; unset: the theme's.
   color?: ClassColor;

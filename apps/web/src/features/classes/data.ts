@@ -19,6 +19,7 @@ export const toClass = (c: ClassInfo & { readonly joinCode?: string }): Class =>
   term: c.term,
   schedule: c.schedule,
   room: c.room,
+  eroomUrl: c.eroomUrl,
   units: c.units,
   classroom: c.classroom,
   studentIds: [...c.studentIds],
@@ -131,6 +132,30 @@ export async function getMyClasses() {
 
 // Before their first class, joining also asks for their student number and sex (for the teacher's grade sheet).
 // Also when their roster entry was imported from Google Classroom, which has neither yet.
+// The posts of a class the student belongs to, newest first.
+export async function getMyAnnouncements(classId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["enrollment.announcements"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+export async function postMyAnnouncement(classId: string, post: PostFields) {
+  await requirePermission({ enrollment: ["read"] });
+  return messageOf(await apiCall((api) => api["enrollment.post"]({ classId, post })));
+}
+
+export async function deleteMyAnnouncement(classId: string, announcementId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  return messageOf(await apiCall((api) => api["enrollment.deletePost"]({ classId, announcementId })));
+}
+
+// Names of the teacher and the students of a class the student belongs to.
+export async function getMyPeople(classId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["enrollment.people"]({ classId }));
+  return Result.isSuccess(result) ? result.success : { teachers: [], classmates: [] };
+}
+
 export async function isFirstJoin() {
   const { student } = await me({ enrollment: ["read"] });
   return student === null || !student.studentNumber || !student.sex;
@@ -140,6 +165,13 @@ export async function isFirstJoin() {
 export async function joinClass(code: string, sex: Sex | null, studentNumber: string | null) {
   await requirePermission({ enrollment: ["create"] });
   return messageOf(await apiCall((api) => api["enrollment.join"]({ code, sex, studentNumber })));
+}
+
+// What a class code opens, so the student can confirm before joining.
+export async function previewClass(code: string) {
+  await requirePermission({ enrollment: ["create"] });
+  const result = await apiCall((api) => api["enrollment.preview"]({ code }));
+  return Result.isSuccess(result) ? ({ ok: result.success } as const) : ({ error: result.failure.message } as const);
 }
 
 export async function leaveClass(classId: string) {

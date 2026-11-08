@@ -80,6 +80,9 @@ export function ClassForm({
         <Field label="Room">
           <input name="room" defaultValue={initial?.room} placeholder="e.g. Lab 204" className={inputClass} />
         </Field>
+        <Field label="E-room link" hint="A Meet, Zoom or Teams link. Students join the class from their schedule with one click.">
+          <input name="eroomUrl" type="url" defaultValue={initial?.eroomUrl} placeholder="https://meet.google.com/…" className={inputClass} />
+        </Field>
         <Field label="Units">
           <input name="units" type="number" min={0} max={12} defaultValue={initial?.units ?? 3} className={inputClass} />
         </Field>

@@ -99,8 +99,16 @@ export class Assets extends Context.Service<
           });
           const questionIds = new Set(assetIdsIn(text.question));
           const answerIds = new Set(assetIdsIn(text.answer));
-          // A post's file is only ever seen by whoever uploaded it.
-          for (const a of others) if (a.purpose !== "post" && (a.purpose === "question" ? questionIds : answerIds).has(a.id)) allowed.add(a.id);
+          // A post's file is seen by whoever uploaded it and by the students of the class it was posted to.
+          const wantsPostFiles = others.some((a) => a.purpose === "post");
+          const postIds = role === "student" && wantsPostFiles ? new Set(assetIdsIn(yield* repo.memberPostText(user.id))) : new Set<string>();
+          // A teacher also sees the files students turned in to their own classes.
+          const turnedIn = role === "teacher" && wantsPostFiles ? new Set(assetIdsIn(yield* repo.submissionText(user.id))) : new Set<string>();
+          for (const a of others) {
+            if (a.purpose === "post") {
+              if (postIds.has(a.id) || turnedIn.has(a.id)) allowed.add(a.id);
+            } else if ((a.purpose === "question" ? questionIds : answerIds).has(a.id)) allowed.add(a.id);
+          }
         }
         return found.filter((a) => allowed.has(a.id));
       });
@@ -119,9 +127,9 @@ export class Assets extends Context.Service<
         size: number,
         fileName?: string,
       ) {
-        // Teachers upload question images and files for their posts; students (and guests) their answers, nothing else.
+        // Teachers upload question images and files for their posts; students their answers and the files of their announcements, guests their answers.
         const role = roleOf(user);
-        const allowed: AssetItem["purpose"][] = role === "teacher" ? ["question", "post"] : role === "student" || role === "guest" ? ["answer"] : [];
+        const allowed: AssetItem["purpose"][] = role === "teacher" ? ["question", "post"] : role === "student" ? ["answer", "post", "profile"] : role === "guest" ? ["answer"] : [];
         if (!allowed.includes(purpose)) return yield* new Forbidden({ message: "Your role can't upload that kind of file." });
         // Images are for questions and answers, documents for posts.
         const isFile = purpose === "post";

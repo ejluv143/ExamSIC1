@@ -232,6 +232,34 @@
       "when": 1794065756709,
       "tag": "0032_assignment_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794141767522,
+      "tag": "0033_student_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794142531697,
+      "tag": "0034_profile_province_zip",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794144560331,
+      "tag": "0035_class_eroom",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794146666576,
+      "tag": "0036_post_submissions",
+      "breakpoints": true
     }
   ]
 }

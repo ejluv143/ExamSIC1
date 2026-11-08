@@ -33,7 +33,9 @@ export class ClassRepo extends Context.Service<
     // The teacher's class in their organization, unless it's archived; null when there is none.
     readonly findOwn: (actor: Actor, classId: string) => Effect.Effect<ClassItem | null>;
     // A class's announcements, newest first.
-    readonly announcements: (classId: string) => Effect.Effect<AnnouncementItem[]>;
+    readonly announcements: (classId: string) => Effect.Effect<(AnnouncementItem & { authorName: string })[]>;
+    // A student removes a post of their own (never the teacher's).
+    readonly deleteOwnAnnouncement: (classId: string, id: string, authorId: string) => Effect.Effect<boolean>;
     readonly insertAnnouncement: (row: typeof classAnnouncements.$inferInsert) => Effect.Effect<AnnouncementItem>;
     // Changes what a post says; null when the class has no such post of that kind.
     readonly updateAnnouncement: (
@@ -53,6 +55,8 @@ export class ClassRepo extends Context.Service<
     // The class (unless archived) and roster entry (in the class's organization) of a student who is a member of it;
     // null otherwise.
     readonly membership: (userId: string, classId: string) => Effect.Effect<{ cls: ClassItem; studentId: string } | null>;
+    // Names only: the class's teacher and its students, by last name.
+    readonly people: (classId: string) => Effect.Effect<{ teacher: string | null; classmates: { firstName: string; lastName: string }[] }>;
     readonly insert: (row: NewClass) => Effect.Effect<void>;
     readonly update: (classId: string, set: Partial<NewClass>) => Effect.Effect<void>;
     // Students of the teacher's classes, and students on the roster of one of the teacher's sessions (a session
@@ -68,6 +72,8 @@ export class ClassRepo extends Context.Service<
     // The student's classes that aren't archived.
     readonly classesOf: (studentId: string) => Effect.Effect<ClassItem[]>;
     // The class a join code opens, unless archived, and the organization it is in.
+    // The class (unless archived) a join code opens, with its teacher's name, for the "join this class?" question.
+    readonly previewByJoinCode: (code: string) => Effect.Effect<{ cls: ClassItem; teacher: string } | null>;
     readonly idByJoinCode: (code: string) => Effect.Effect<{ id: string; organizationId: string | null } | null>;
     readonly fillStudent: (studentId: string, studentNumber: string, sex: Sex) => Effect.Effect<StudentItem | null>;
     // Creates the account's roster entry; one made in the meantime (a double submit) is left alone.
@@ -102,13 +108,31 @@ export class ClassRepo extends Context.Service<
           return row ?? null;
         }),
         announcements: Effect.fn("ClassRepo.announcements")(function* (classId) {
-          return yield* db.query((d) =>
+          const rows = yield* db.query((d) =>
             d
-              .select()
+              .select({ post: classAnnouncements, authorName: users.name })
               .from(classAnnouncements)
+              .leftJoin(users, eq(users.id, classAnnouncements.authorId))
               .where(eq(classAnnouncements.classId, classId))
               .orderBy(desc(classAnnouncements.createdAt)),
           );
+          return rows.map((r) => ({ ...r.post, authorName: r.authorName ?? "" }));
+        }),
+        deleteOwnAnnouncement: Effect.fn("ClassRepo.deleteOwnAnnouncement")(function* (classId, id, authorId) {
+          const removed = yield* db.query((d) =>
+            d
+              .delete(classAnnouncements)
+              .where(
+                and(
+                  eq(classAnnouncements.classId, classId),
+                  eq(classAnnouncements.id, id),
+                  eq(classAnnouncements.authorId, authorId),
+                  eq(classAnnouncements.kind, "announcement"),
+                ),
+              )
+              .returning({ id: classAnnouncements.id }),
+          );
+          return removed.length > 0;
         }),
         insertAnnouncement: Effect.fn("ClassRepo.insertAnnouncement")(function* (row) {
           const [created] = yield* db.query((d) => d.insert(classAnnouncements).values(row).returning());
@@ -172,6 +196,20 @@ export class ClassRepo extends Context.Service<
               .where(and(eq(classes.id, classId), eq(students.userId, userId), isNull(classes.archivedAt))),
           );
           return row ?? null;
+        }),
+        people: Effect.fn("ClassRepo.people")(function* (classId) {
+          const [teacher] = yield* db.query((d) =>
+            d.select({ name: users.name }).from(classes).innerJoin(users, eq(users.id, classes.teacherId)).where(eq(classes.id, classId)),
+          );
+          const classmates = yield* db.query((d) =>
+            d
+              .select({ firstName: students.firstName, lastName: students.lastName })
+              .from(classMembers)
+              .innerJoin(students, eq(students.id, classMembers.studentId))
+              .where(eq(classMembers.classId, classId))
+              .orderBy(asc(students.lastName), asc(students.firstName)),
+          );
+          return { teacher: teacher?.name ?? null, classmates };
         }),
         insert: Effect.fn("ClassRepo.insert")(function* (row) {
           yield* db.query((d) => d.insert(classes).values(row));
@@ -247,6 +285,16 @@ export class ClassRepo extends Context.Service<
               .orderBy(asc(classes.courseCode), asc(classes.section)),
           );
           return rows.map((r) => r.cls);
+        }),
+        previewByJoinCode: Effect.fn("ClassRepo.previewByJoinCode")(function* (code) {
+          const [row] = yield* db.query((d) =>
+            d
+              .select({ cls: classes, teacher: users.name })
+              .from(classes)
+              .innerJoin(users, eq(users.id, classes.teacherId))
+              .where(and(eq(classes.joinCode, code), isNull(classes.archivedAt))),
+          );
+          return row ?? null;
         }),
         idByJoinCode: Effect.fn("ClassRepo.idByJoinCode")(function* (code) {
           const [cls] = yield* db.query((d) =>

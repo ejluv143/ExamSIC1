@@ -107,9 +107,36 @@ export const EnrollmentHandlers = EnrollmentRpcs.toLayer(
         return yield* enrollment.join(user, input, headers);
       }),
 
+      "enrollment.preview": Effect.fn("enrollment.preview")(function* ({ code }) {
+        const user = yield* CurrentUser;
+        if (user.role !== "user") return yield* new Forbidden({ message: "Only students join classes." });
+        return yield* enrollment.preview(user, code);
+      }),
+
       "enrollment.leave": Effect.fn("enrollment.leave")(function* ({ classId }) {
         const me = yield* requireActor({ enrollment: ["delete"] });
         yield* enrollment.leave(me.actor, classId);
+      }),
+
+      "enrollment.post": Effect.fn("enrollment.post")(function* ({ classId, post }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return toAnnouncement({ ...(yield* enrollment.post(me.actor, classId, post)), authorName: me.name });
+      }),
+
+      "enrollment.deletePost": Effect.fn("enrollment.deletePost")(function* ({ classId, announcementId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        yield* enrollment.deletePost(me.actor, classId, announcementId);
+      }),
+
+      "enrollment.people": Effect.fn("enrollment.people")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        const { teacher, classmates } = yield* enrollment.people(me.actor, classId);
+        return { teachers: teacher ? [teacher] : [], classmates: classmates.map((s) => `${s.firstName} ${s.lastName}`.trim()) };
+      }),
+
+      "enrollment.announcements": Effect.fn("enrollment.announcements")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return (yield* enrollment.announcements(me.actor, classId)).map(toAnnouncement);
       }),
     });
   }),

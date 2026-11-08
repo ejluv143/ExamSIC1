@@ -6,7 +6,7 @@ import type { Question, StudentQuestion } from "./question.ts";
 // `question`: a teacher's image in a prompt, choice, background or paper header logo. `answer`: a student's drawing
 // or photo.
 // `post`: a file a teacher attaches to a class announcement (a PDF or a Word, Excel or PowerPoint file).
-export const assetPurposes = ["question", "answer", "post"] as const;
+export const assetPurposes = ["question", "answer", "post", "profile"] as const;
 export const AssetPurpose = Schema.Literals(assetPurposes);
 export type AssetPurpose = typeof AssetPurpose.Type;
 
