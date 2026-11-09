@@ -37,6 +37,7 @@ export default async function ClassRecordPage(props: PageProps<"/teacher/classes
         linkable={data.linkable}
         attendanceTaken={data.attendanceTaken}
         attendance={data.attendance}
+        currentTerm={data.currentTerm}
       />
     </>
   );

@@ -54,7 +54,7 @@ export default async function ClassesPage(props: PageProps<"/teacher/classes">) 
           </EmptyState>
         </Card>
       ) : (
-        <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2 xl:grid-cols-3">
           {classes.map((c) => {
             const count = sessionCount.get(c.id) ?? 0;
             return (

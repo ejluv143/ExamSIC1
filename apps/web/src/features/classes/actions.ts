@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Result, Schema, SchemaGetter } from "effect";
 import { subjectAreaNames } from "@examinus/domain/roles";
-import { attachmentKinds, classColorNames, type PostFields } from "@examinus/domain/classes";
+import { attachmentKinds, classColorNames, resourceKinds, type PostFields } from "@examinus/domain/classes";
 import { parseForm } from "@/lib/validate";
 import {
   archiveClass,
@@ -14,10 +14,15 @@ import {
   postAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
+  addResource,
+  deleteResource,
   updateClass,
   customizeClass,
   connectClassroom,
   importClassroomCourses,
+  postMyAnnouncement,
+  previewClass,
+  deleteMyAnnouncement,
   syncClassroomRoster,
   joinClass,
   leaveClass,
@@ -63,6 +68,7 @@ const fields = Schema.Struct({
   term: text(60, "term").pipe(required("Enter the term.")),
   schedule: text(80, "schedule").pipe(required("Enter the schedule.")),
   room: text(60, "room").pipe(required("Enter the room.")),
+  eroomUrl: text(300, "eroomUrl"),
   units: Schema.FiniteFromString.check(Schema.isInt({ message: unitsMessage }), Schema.isBetween({ minimum: 0, maximum: 12 }, { message: unitsMessage })).pipe(
     required(unitsMessage),
   ),
@@ -192,6 +198,40 @@ export async function deleteAnnouncementAction(classId: string, announcementId: 
   revalidatePath(`/teacher/classes/${classId}`, "layout");
 }
 
+// The "Add resource" dialog: a kind, an address, a title and one short line under it.
+export async function addResourceAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const rawKind = String(formData.get("kind") ?? "link");
+  const kind = (resourceKinds as readonly string[]).includes(rawKind) ? (rawKind as (typeof resourceKinds)[number]) : "link";
+  const url = String(formData.get("url") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  if (!url) return { error: kind === "file" ? "Choose a file to upload." : "Paste the address of the resource." };
+  if (!title) return { error: "Give the resource a title." };
+  const error = await addResource(classId, { kind, url, title, detail: String(formData.get("detail") ?? "").trim() });
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function deleteResourceAction(classId: string, resourceId: string): Promise<ClassFormState> {
+  const error = await deleteResource(classId, resourceId);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+// A student's own announcement: text, links and files; never an assignment or activity.
+export async function postMyAnnouncementAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await postMyAnnouncement(classId, { ...post, kind: "announcement", dueAt: null });
+  if (error) return { error };
+  revalidatePath(`/student/classes/${classId}`, "layout");
+}
+
+export async function deleteMyAnnouncementAction(classId: string, announcementId: string): Promise<ClassFormState> {
+  const error = await deleteMyAnnouncement(classId, announcementId);
+  if (error) return { error };
+  revalidatePath(`/student/classes/${classId}`, "layout");
+}
+
 // "Customize" on the class banner: its colour and picture ("" clears either).
 export async function customizeClassAction(classId: string, color: string, headerImage: string): Promise<ClassFormState> {
   const error = await customizeClass(classId, {
@@ -240,6 +280,12 @@ export async function joinClassAction(_prev: JoinState, formData: FormData): Pro
   if (error) return { error };
   revalidatePath("/", "layout");
   return { joined: true };
+}
+
+export async function previewClassAction(code: string) {
+  const trimmed = code.trim();
+  if (!trimmed) return { error: "Enter the class code from your teacher." } as const;
+  return previewClass(trimmed);
 }
 
 export async function leaveClassAction(classId: string): Promise<{ error: string } | undefined> {

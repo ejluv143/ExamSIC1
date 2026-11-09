@@ -13,6 +13,8 @@
     "./attendance": "./src/attendance.ts",
     "./bank": "./src/bank.ts",
     "./avatar": "./src/avatar.ts",
+    "./profile": "./src/profile.ts",
+    "./submissions": "./src/submissions.ts",
     "./blanks": "./src/blanks.ts",
     "./client": "./src/client.ts",
     "./classes": "./src/classes.ts",

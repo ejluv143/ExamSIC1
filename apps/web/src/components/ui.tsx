@@ -316,7 +316,8 @@ export function Field({
 
 export function Table({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-x-auto">
+    // `relative` keeps absolutely placed cell content (screen-reader labels, menus) inside the scroll box.
+    <div className="relative overflow-x-auto">
       <table className="w-full text-left text-sm">{children}</table>
     </div>
   );

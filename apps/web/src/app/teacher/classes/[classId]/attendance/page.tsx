@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { CalendarCheck } from "lucide-react";
 import { Badge, ButtonLink, Card, CardHeader, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import { attendancePolicy, termOf } from "@examinus/domain/attendance";
+import { attendancePoints } from "@examinus/domain/class-record";
 import { statusLabel } from "@/features/attendance/labels";
 import { getAttendance } from "@/features/attendance/data";
 import { getStoredRecord } from "@/features/records/data/record";
@@ -73,8 +74,8 @@ export default async function AttendancePage(props: PageProps<"/teacher/classes/
           }
         />
         <p className="border-b border-border bg-info-soft px-5 py-2 text-sm text-info">
-          These absences fill in the class record&apos;s No. of Absences, and its Attendance item scores meetings held
-          minus absences.
+          These absences fill in the class record&apos;s No. of Absences, and its Attendance item is worth {attendancePoints}
+          points in each term (you can change it in the record), lowered by each absence.
         </p>
         <Table>
           <thead>

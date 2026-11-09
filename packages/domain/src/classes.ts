@@ -33,6 +33,8 @@ export const ClassInfo = Schema.Struct({
   term: Schema.String,
   schedule: Schema.String,
   room: Schema.String,
+  // The class's online room (a Meet, Zoom or Teams link), or "" when it has none.
+  eroomUrl: Schema.String,
   units: Schema.Number,
   color: Schema.NullOr(ClassColorSchema),
   headerImage: Schema.NullOr(Schema.String),
@@ -65,6 +67,8 @@ export const ClassFields = Schema.Struct({
   term: Text(60),
   schedule: Text(80),
   room: Text(60),
+  // Left out by clients that don't set it (kept when editing); "" removes it.
+  eroomUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(300), Schema.isPattern(/^(https?:\/\/\S+)?$/))),
   units: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 12 })),
   // Left out by clients that don't set one (the colour is kept when editing, and starts as the theme's).
   color: Schema.optionalKey(Schema.NullOr(ClassColorSchema)),
@@ -138,6 +142,9 @@ export const Announcement = Schema.Struct({
   // When an assignment or activity is due (ISO), if it has a deadline.
   dueAt: Schema.NullOr(Schema.String),
   attachments: Schema.Array(Attachment),
+  // Who posted it: the account id and display name ("" when unknown).
+  authorId: Schema.String,
+  authorName: Schema.String,
   // Assignments only: what it is worth (the rubric's total when it has one), how long students get once they
   // start (minutes), and the rubric.
   points: Schema.NullOr(Schema.Int),
@@ -163,3 +170,35 @@ export const PostFields = Schema.Struct({
   rubric: Schema.optionalKey(Schema.Array(RubricRow)),
 });
 export type PostFields = typeof PostFields.Type;
+
+// Class Resources: the shelf a teacher keeps for a class (a textbook link, the syllabus, the lab rules). Each is an
+// address, a title and one short line under it. `kind` picks its icon; a "file" is a PDF, Word, Excel or PowerPoint
+// document the teacher uploaded (its `url` is then `asset:<id>`), the others are links checked like an attachment's
+// (a YouTube link must be on YouTube, a Drive one on Google Drive).
+export const resourceKinds = ["link", "youtube", "drive", "file"] as const;
+export const maxResources = 30;
+export const ClassResource = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(resourceKinds),
+  url: Schema.String,
+  title: Schema.String,
+  detail: Schema.String,
+});
+export type ClassResource = typeof ClassResource.Type;
+
+export const ResourceFields = Schema.Struct({
+  kind: Schema.Literals(resourceKinds),
+  url: Schema.String.check(Schema.isMaxLength(500)),
+  title: Schema.String.check(Schema.isMaxLength(150)),
+  detail: Schema.String.check(Schema.isMaxLength(150)),
+});
+export type ResourceFields = typeof ResourceFields.Type;
+
+// The address to keep for a resource, or null when it isn't valid for its kind.
+export function cleanResourceUrl(kind: ResourceFields["kind"], rawUrl: string): string | null {
+  if (kind === "file") {
+    const id = assetIdOfRef(rawUrl.trim());
+    return id && assetIdsIn(id)[0] === id ? assetRef(id) : null;
+  }
+  return cleanAttachment(kind, rawUrl)?.url ?? null;
+}

@@ -21,7 +21,7 @@ const columns: { key: QuizSortKey; label: string; naturalDir: SortDir; className
   { key: "questions", label: "Questions", naturalDir: "desc", className: "hidden text-right lg:table-cell" },
   { key: "sessions", label: "Sessions", naturalDir: "desc", className: "hidden text-right lg:table-cell" },
   { key: "status", label: "Status", naturalDir: "asc" },
-  { key: "updated", label: "Updated", naturalDir: "desc", className: "hidden xl:table-cell" },
+  { key: "updated", label: "Updated", naturalDir: "desc", className: "hidden 2xl:table-cell" },
 ];
 
 // What the status cell says under the pill: when the upcoming session opens, else when the headline one last ran.
@@ -68,7 +68,7 @@ export function QuizTable({
             // The title's link covers the whole row (after:inset-0); the actions sit above it.
             <tr key={quiz.id} className="group relative transition-colors hover:bg-primary-soft/40 has-focus-visible:bg-primary-soft/40">
               <td className="py-3 pr-3 pl-4">
-                <div className="flex min-w-[10rem] items-center gap-3">
+                <div className="flex items-center gap-3 sm:min-w-[10rem]">
                   <ModeTile mode={lead?.mode ?? null} />
                   <div className="min-w-0">
                     <Link
@@ -99,14 +99,14 @@ export function QuizTable({
                 ) : (
                   <span className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-0.5 text-xs font-semibold text-muted">Draft</span>
                 )}
-                <span className="mt-1 block text-xs whitespace-nowrap text-muted">{statusNote(lead)}</span>
+                <span className="mt-1 block text-xs text-muted sm:whitespace-nowrap">{statusNote(lead)}</span>
               </td>
-              <td className="hidden px-3 py-3 whitespace-nowrap text-muted xl:table-cell">{formatRelative(quiz.updatedAt)}</td>
-              <td className="py-3 pr-4 pl-3">
+              <td className="hidden px-3 py-3 whitespace-nowrap text-muted 2xl:table-cell">{formatRelative(quiz.updatedAt)}</td>
+              <td className="py-3 pr-2 pl-1 sm:pr-4 sm:pl-3">
                 <div className="relative z-10 flex items-center justify-end gap-1">
                   {live && (
                     <ButtonLink href={live.mode === "game" ? `${base}/sessions/${live.id}/present` : `${base}/sessions/${live.id}/live`} className="px-3 py-1.5 text-xs">
-                      <Radio className="size-3.5" aria-hidden /> Resume
+                      <Radio className="size-3.5" aria-hidden /> <span className="max-sm:sr-only">Resume</span>
                     </ButtonLink>
                   )}
                   {/* Phones keep the row link and the menu (which has Edit); the labelled button needs the room. */}

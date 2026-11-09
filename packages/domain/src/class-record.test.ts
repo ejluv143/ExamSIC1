@@ -12,6 +12,7 @@ import {
   rosterGroups,
   setAbsences,
   setDropped,
+  setItemMax,
   setScore,
   studentStandings,
   teacherRecord,
@@ -219,7 +220,24 @@ describe("teacherRecord", () => {
     const { record, linked, attendanceTaken } = teacherRecord(blankRecord("c1"), cls, [], meetings as never);
     const item = record.terms.midterm.flatMap((c) => c.items).find((i) => i.source === "attendance")!;
     expect(attendanceTaken).toBe(true);
-    expect(linked[item.id]).toEqual({ s1: 1, s2: 0 });
+    expect(item.maxScore).toBe(15);
+    expect(linked[item.id]).toEqual({ s1: 15, s2: 0 });
+  });
+
+  test("attendance is 15 points in each term and each absence takes its share off", () => {
+    const day = (n: number, records: Record<string, string>) => ({
+      id: `m${n}`,
+      classId: "c1",
+      date: `2026-01-${String(11 + n).padStart(2, "0")}`,
+      takenAt: `2026-01-${String(11 + n).padStart(2, "0")}T01:00:00Z`,
+      records,
+    });
+    // Four meetings held; s2 was absent at one of them.
+    const meetings = [day(1, {}), day(2, {}), day(3, { s2: "absent" }), day(4, {})];
+    const { record, linked } = teacherRecord(blankRecord("c1"), cls, [], meetings as never);
+    const item = record.terms.midterm.flatMap((c) => c.items).find((i) => i.source === "attendance")!;
+    expect(item.maxScore).toBe(15);
+    expect(linked[item.id]).toEqual({ s1: 15, s2: 11.25 });
   });
 });
 
@@ -246,5 +264,66 @@ describe("studentStandings", () => {
     expect(out.map((o) => o.class.id)).toEqual(["c1", "c2"]);
     expect(out[0]!.terms.midterm.categories.flatMap((c) => c.items.filter((i) => i.title.startsWith("Quiz")).map((i) => i.score))).toEqual([20]);
     expect(out[1]!.terms.midterm.categories.flatMap((c) => c.items.filter((i) => i.title.startsWith("Quiz")).map((i) => i.score))).toEqual([10]);
+  });
+});
+
+describe("assignments in the record", () => {
+  const assignment = (id: string, over: Partial<ScoredSession> = {}): ScoredSession => ({
+    ...session(id, { title: `Assignment ${id}`, mode: "assignment", maxScore: 50, opensAt: "2026-09-10T04:00:00.000Z" }),
+    scores: [
+      { studentId: "s1", score: 45 },
+      { studentId: "s2", score: null },
+    ],
+    ...over,
+  });
+  const assignmentsCat = (r: ClassRecord) => r.terms.midterm.find((c) => c.name === "Assignments")!;
+
+  test("an assignment worth points goes into the Assignments category, not Quizzes", () => {
+    const { record } = prepareRecord(blankRecord("c1"), cls, [assignment("p1"), session("q1")], []);
+    const midterm = record.terms.midterm;
+    expect(midterm.find((c) => c.name === "Assignments")!.items.map((i) => i.sessionId)).toEqual(["p1"]);
+    expect(midterm.find((c) => c.name === "Quizzes")!.items.map((i) => i.sessionId)).toEqual(["q1"]);
+  });
+
+  test("its item has the assignment's points as the highest possible score", () => {
+    const { record } = prepareRecord(blankRecord("c1"), cls, [assignment("p1")], []);
+    expect(assignmentsCat(record).items[0]).toMatchObject({ title: "Assignment p1", maxScore: 50, sessionId: "p1" });
+  });
+
+  test("the teacher sees every graded score, and a score still ungraded stays empty and pending", () => {
+    const { record, linked, pending } = teacherRecord(blankRecord("c1"), cls, [assignment("p1")], []);
+    const id = assignmentsCat(record).items[0]!.id;
+    expect(linked[id]).toEqual({ s1: 45, s2: null });
+    expect(pending[id]).toEqual(["s2"]);
+  });
+
+  test("taking it out of the record keeps it from coming back", () => {
+    const withIt = prepareRecord(blankRecord("c1"), cls, [assignment("p1")], []).record;
+    const cat = assignmentsCat(withIt);
+    const out = removeItem(withIt, "midterm", cat.id, cat.items[0]!.id);
+    expect(assignmentsCat(prepareRecord(out, cls, [assignment("p1")], []).record).items).toHaveLength(0);
+  });
+});
+
+describe("an attendance item's points", () => {
+  test("the teacher can change what attendance is worth, and the scores follow it", () => {
+    const base = blankRecord("c1");
+    const cat = base.terms.midterm.find((c) => /attend/i.test(c.name))!;
+    const item = cat.items.find((i) => i.source === "attendance")!;
+    const set = setItemMax(base, "midterm", cat.id, item.id, "20");
+    const day = (n: number, records: Record<string, string>) => ({
+      id: `m${n}`,
+      classId: "c1",
+      date: `2026-01-${String(11 + n).padStart(2, "0")}`,
+      takenAt: `2026-01-${String(11 + n).padStart(2, "0")}T01:00:00Z`,
+      records,
+    });
+    const meetings = [day(1, {}), day(2, {}), day(3, { s2: "absent" }), day(4, {})];
+    const { record, linked } = teacherRecord(set, cls, [], meetings as never);
+    const shown = record.terms.midterm.flatMap((c) => c.items).find((i) => i.source === "attendance")!;
+    expect(shown.maxScore).toBe(20);
+    expect(linked[shown.id]).toEqual({ s1: 20, s2: 15 });
+    // The final term keeps the default.
+    expect(record.terms.final.flatMap((c) => c.items).find((i) => i.source === "attendance")!.points).toBeUndefined();
   });
 });

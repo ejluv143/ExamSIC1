@@ -11,8 +11,10 @@ export type RecordItem = {
   maxScore: number;
   // Linked to a quiz session: scores fill in from students' submitted attempts.
   sessionId: string | null;
-  // "attendance": the score is the term's attendance (meetings held minus absences); maxScore follows it.
+  // "attendance": the score is the term's attendance percentage out of `points`.
   source?: "attendance";
+  // An attendance item's worth, as the teacher set it; `attendancePoints` when not set. maxScore follows it.
+  points?: number;
 };
 
 export type RecordCategory = {
@@ -99,6 +101,11 @@ export function categoryResult(record: ClassRecord, linked: LinkedScores, cat: R
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// What an Attendance item is worth in each term unless the teacher sets another amount (`RecordItem.points`): a
+// student present at every meeting of the term gets all of it, and each absence (after lates are turned into
+// absences) takes off its share of that term's meetings held.
+export const attendancePoints = 15;
+
 export function termResult(record: ClassRecord, linked: LinkedScores, term: GradingTerm, studentId: string) {
   const cats = record.terms[term].map((c) => ({ cat: c, ...categoryResult(record, linked, c, studentId) }));
   const adw = cats.filter((c) => !c.cat.isExam).reduce((n, c) => n + c.weighted, 0);
@@ -141,14 +148,14 @@ function blankTerm(term: GradingTerm): RecordCategory[] {
   const prefix = term === "midterm" ? "m" : "f";
   return [
     { id: `${prefix}-${newId()}`, name: "Quizzes", weight: 20, isExam: false, items: [] },
-    { id: `${prefix}-${newId()}`, name: "Assignments", weight: 15, isExam: false, items: [] },
-    { id: `${prefix}-${newId()}`, name: "Major Projects", weight: 15, isExam: false, items: [] },
+    { id: `${prefix}-${newId()}`, name: "Assignments", weight: 20, isExam: false, items: [] },
+    { id: `${prefix}-${newId()}`, name: "Major Projects", weight: 10, isExam: false, items: [] },
     {
       id: `${prefix}-${newId()}`,
       name: "Attendance / Participation",
       weight: 10,
       isExam: false,
-      // Scored from the roll call: meetings held minus absences.
+      // Scored from the roll call: the attendance percentage out of 15 points.
       items: [{ id: `${prefix}-${newId()}`, title: "Attendance", maxScore: 0, sessionId: null, source: "attendance" }],
     },
     { id: `${prefix}-${newId()}`, name: term === "midterm" ? "Midterm Exam" : "Final Exam", weight: 40, isExam: true, items: [] },
@@ -173,13 +180,35 @@ export function blankRecord(classId: string): ClassRecord {
 export type RecordSession = {
   readonly sessionId: string;
   readonly title: string;
-  readonly mode: SessionMode;
+  // "assignment": a class assignment worth points, linked in like a quiz (its id is in `sessionId`).
+  readonly mode: SessionMode | "assignment";
   readonly maxScore: number;
   readonly period: ExamPeriod | null;
   readonly opensAt: string | null;
   readonly closesAt: string | null;
   readonly countInRecord: boolean;
 };
+
+// An assignment worth points, as the record sees it: linked like a session, with the due date deciding its term (the
+// date it was posted when it has none).
+export function assignmentSession(a: {
+  readonly announcementId: string;
+  readonly title: string;
+  readonly points: number;
+  readonly dueAt: string | null;
+  readonly createdAt: string;
+}): RecordSession {
+  return {
+    sessionId: a.announcementId,
+    title: a.title,
+    mode: "assignment",
+    maxScore: a.points,
+    period: null,
+    opensAt: a.dueAt ?? a.createdAt,
+    closesAt: a.dueAt,
+    countInRecord: true,
+  };
+}
 
 const manilaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 
@@ -191,7 +220,8 @@ function termFor(s: RecordSession): GradingTerm {
 }
 
 // Every session of the class goes into its record by itself, so scores fill in without any setup: quizzes into
-// the Quizzes category (or the first activity category), exams into the major exam.
+// the Quizzes category (or the first activity category), exams into the major exam, and assignments worth points
+// into an assignment-like category (or the first activity category).
 // Skipped: ones marked not to count, and ones the teacher took out. Linked items keep the session's current total.
 function autoLink(record: ClassRecord, sessions: readonly RecordSession[]): ClassRecord {
   const out = structuredClone(record);
@@ -210,7 +240,9 @@ function autoLink(record: ClassRecord, sessions: readonly RecordSession[]): Clas
     const cat =
       s.mode === "exam"
         ? cats.find((c) => c.isExam)
-        : (cats.find((c) => !c.isExam && /quiz/i.test(c.name)) ?? cats.find((c) => !c.isExam));
+        : s.mode === "assignment"
+          ? (cats.find((c) => !c.isExam && /assign|activit|seatwork|home ?work|daily/i.test(c.name)) ?? cats.find((c) => !c.isExam))
+          : (cats.find((c) => !c.isExam && /quiz/i.test(c.name)) ?? cats.find((c) => !c.isExam));
     if (!cat) continue;
     cat.items.push({ id: `${cat.id}-x-${s.sessionId}`, title: s.title, maxScore: s.maxScore, sessionId: s.sessionId });
   }
@@ -218,7 +250,8 @@ function autoLink(record: ClassRecord, sessions: readonly RecordSession[]): Clas
 }
 
 // Absences in the class record come from attendance once any has been taken, and items set to
-// "From attendance" score meetings held minus absences. Returns the record (changed copy) and those scores.
+// "From attendance" are scored as the attendance percentage out of `attendancePoints`. Returns the record (changed
+// copy) and those scores.
 export function applyAttendance(
   record: ClassRecord,
   cls: { readonly studentIds: readonly string[] },
@@ -233,9 +266,14 @@ export function applyAttendance(
       for (const item of cat.items) {
         if (item.source !== "attendance") continue;
         const held = list.filter((m) => m.takenAt && termOf(m.date) === term).length;
-        item.maxScore = held;
+        // Worth its points once a meeting has been held in the term; every absence takes its share off.
+        const worth = item.points ?? attendancePoints;
+        item.maxScore = held > 0 ? worth : 0;
         scores[item.id] = Object.fromEntries(
-          cls.studentIds.map((sid) => [sid, Math.max(0, held - tally(list, sid, term).effectiveAbsences)]),
+          cls.studentIds.map((sid) => [
+            sid,
+            held > 0 ? round2((worth * Math.max(0, held - tally(list, sid, term).effectiveAbsences)) / held) : 0,
+          ]),
         );
       }
   }
@@ -342,9 +380,24 @@ export function studentStanding(input: {
   const dropped = record.dropped.includes(sid);
   const absences = terms.midterm.absences + terms.final.absences;
   const rawScore = started.length ? round2(started.reduce((n, t) => n + t.rawScore, 0) / started.length) : null;
+  // The grade sheet's own totals (FINAL-GRADE-SHEET): work that isn't recorded yet counts as zero, ADW is capped
+  // at its weight (60), the major exam is 40, and the course raw score is the average of the two terms.
+  const sheetTerm = (term: GradingTerm) => {
+    const r = termResult(record, linked, term, sid);
+    return {
+      categories: r.categories.map((c) => ({ name: c.cat.name, weight: c.cat.weight, isExam: c.cat.isExam, weighted: round2(c.weighted) })),
+      adw: r.adw,
+      exam: r.exam,
+      rawScore: r.rawScore,
+      grade: r.grade,
+    };
+  };
+  const course = courseResult(record, linked, sid);
+  const sheet = { midterm: sheetTerm("midterm"), final: sheetTerm("final"), rawScore: course.rawScore, grade: course.grade, remark: course.remark };
   return {
     attendance,
     terms,
+    sheet,
     current:
       rawScore === null
         ? null
@@ -549,7 +602,10 @@ export function renameItem(record: ClassRecord, term: GradingTerm, catId: string
 export function setItemMax(record: ClassRecord, term: GradingTerm, catId: string, itemId: string, raw: string): ClassRecord {
   return edited(record, (r) => {
     const target = item(r, term, catId, itemId);
-    if (target) target.maxScore = nonNegative(raw);
+    if (!target) return;
+    target.maxScore = nonNegative(raw);
+    // An attendance item's maxScore follows its points, so the amount the teacher types is kept as its points.
+    if (target.source === "attendance") target.points = target.maxScore;
   });
 }
 

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarClock, ExternalLink, MapPin } from "lucide-react";
+import { ArrowRight, CalendarClock, MapPin } from "lucide-react";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
 import { getMySessions } from "@/features/attempt/data";
 import { getMyClasses, isFirstJoin } from "@/features/classes/data";
@@ -33,13 +33,17 @@ export default async function ClassesPage() {
             const todo = mine.filter((i) => bucketOf(i) === "todo").length;
             const upcoming = mine.filter((i) => bucketOf(i) === "upcoming").length;
             return (
-              <Card key={c.id} className="flex flex-col p-5">
+              <Card key={c.id} className="relative flex flex-col p-5 transition hover:border-primary hover:shadow-md focus-within:border-primary">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold tracking-wide text-primary uppercase">
                       {c.courseCode} · {c.section}
                     </p>
-                    <h2 className="mt-1 font-semibold">{c.title}</h2>
+                    <h2 className="mt-1 font-semibold">
+                      <Link href={`/student/classes/${c.id}`} className="after:absolute after:inset-0 after:rounded-xl hover:text-primary focus-visible:outline-2 focus-visible:outline-primary">
+                        {c.title}
+                      </Link>
+                    </h2>
                   </div>
                   <Badge>{c.units} units</Badge>
                 </div>
@@ -58,21 +62,14 @@ export default async function ClassesPage() {
                   </div>
                 </dl>
                 <div className="mt-4 flex flex-1 flex-wrap items-end justify-between gap-3 border-t border-border pt-4">
-                  <Link href="/student/assessments?show=todo" className="text-sm hover:underline">
+                  <Link href="/student/assessments?show=todo" className="relative z-10 text-sm hover:underline">
                     {todo > 0 ? `${todo} to do` : "Nothing to do"}
                     {upcoming > 0 && ` · ${upcoming} upcoming`}
                   </Link>
-                  <div className="flex items-center gap-2">
-                    {c.classroom && (
-                      <a
-                        href={c.classroom.link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground"
-                      >
-                        Open in Classroom <ExternalLink className="size-3.5" aria-hidden />
-                      </a>
-                    )}
+                  <div className="relative z-10 flex items-center gap-2">
+                    <Link href={`/student/classes/${c.id}`} className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-foreground">
+                      Open classroom <ArrowRight className="size-3.5" aria-hidden />
+                    </Link>
                     <LeaveClassButton title={c.title} leave={leaveClassAction.bind(null, c.id)} />
                   </div>
                 </div>

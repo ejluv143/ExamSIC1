@@ -7,12 +7,24 @@ import { NewQuizButton } from "@/features/quiz/components/new-quiz-button";
 import type { Class } from "../types";
 import type { ClassFormState } from "../actions";
 import { AnnouncementComposer } from "./announcements";
+import { Initials } from "./initials";
 
 type Post = (prev: ClassFormState, formData: FormData) => Promise<ClassFormState>;
 
 // Classroom's "+ Create": a pill button whose menu starts an announcement, assignment, activity or quiz. Without
 // `post` (the Classwork tab, which has no composer) the menu only offers the quiz.
-export function CreateMenu({ cls, post }: { cls: Class; post?: Post }) {
+export function CreateMenu({
+  cls,
+  post,
+  variant = "button",
+  userName = "",
+}: {
+  cls: Class;
+  post?: Post;
+  // "composer": the stream's "Announce something to your class…" card, with a button for each kind of post.
+  variant?: "button" | "composer";
+  userName?: string;
+}) {
   const [menu, setMenu] = useState(false);
   const [composing, setComposing] = useState<PostKind | null>(null);
   const [quiz, setQuiz] = useState(false);
@@ -34,6 +46,51 @@ export function CreateMenu({ cls, post }: { cls: Class; post?: Post }) {
 
   const item =
     "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-muted focus-visible:bg-surface-muted focus-visible:outline-none";
+
+  if (variant === "composer" && post) {
+    const kinds = [
+      ["announcement", "Announcement", Megaphone],
+      ["assignment", "Assignment", ClipboardCheck],
+      ["activity", "Activity", Shapes],
+    ] as const;
+    const chip =
+      "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted hover:bg-surface-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary";
+    return (
+      <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <Initials name={userName} className="size-11" />
+          <button
+            type="button"
+            onClick={() => setComposing("announcement")}
+            className="min-w-0 flex-1 rounded-xl bg-primary-soft/60 px-4 py-3 text-left text-sm text-muted hover:bg-primary-soft focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            Announce something to your class…
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1">
+            {kinds.map(([kind, label, Icon]) => (
+              <button key={kind} type="button" className={chip} onClick={() => setComposing(kind)}>
+                <Icon className="size-4 text-primary" aria-hidden /> {label}
+              </button>
+            ))}
+            <button type="button" className={chip} onClick={() => setQuiz(true)}>
+              <ClipboardList className="size-4 text-primary" aria-hidden /> Quiz
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setComposing("announcement")}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-depth hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <Plus className="size-4" aria-hidden /> Post
+          </button>
+        </div>
+        <AnnouncementComposer post={post} kind={composing} onClose={() => setComposing(null)} classTitle={cls.title} />
+        <NewQuizButton classes={[cls]} classId={cls.id} open={quiz} onOpenChange={setQuiz} hideTrigger />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

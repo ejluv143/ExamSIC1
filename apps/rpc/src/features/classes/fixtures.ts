@@ -23,6 +23,7 @@ export const classItem = (overrides: Partial<ClassItem> = {}): ClassItem => ({
   term: "1st",
   schedule: "",
   room: "",
+  eroomUrl: "",
   units: 3,
   joinCode: "ABCDEFG",
   classroom: null,

@@ -1,5 +1,6 @@
 "use client";
 
+import clsx from "clsx";
 import { useActionState, useRef, useState } from "react";
 import { FileText, Link2, Loader2, Pencil, Plus, Trash2, Upload, Users, X } from "lucide-react";
 import { assetRef, fileAccept } from "@examinus/domain/asset";
@@ -125,12 +126,12 @@ export function PostDetails({ post, rubric = true }: { post: Announcement; rubri
 }
 
 // The attachments of a post in the stream: one card per attachment; links open in a new tab, files download.
-export function AttachmentList({ attachments = [] }: { attachments?: readonly Attachment[] }) {
+export function AttachmentList({ attachments = [], single = false }: { attachments?: readonly Attachment[]; single?: boolean }) {
   if (attachments.length === 0) return null;
   return (
-    <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+    <ul className={clsx("mt-3 grid grid-cols-[minmax(0,1fr)] gap-2", !single && "sm:grid-cols-2")}>
       {attachments.map((a) => (
-        <li key={a.url}>
+        <li key={a.url} className="min-w-0">
           {a.kind === "file" ? (
             <FileCard attachment={a} />
           ) : (

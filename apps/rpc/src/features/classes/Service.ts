@@ -1,11 +1,11 @@
 // A teacher's classes: who owns one, its roster, and the teacher's changes to both.
 import { NotFound } from "@examinus/contract/errors";
 import { assetIdsIn } from "@examinus/domain/asset";
-import { cleanAttachment, maxAttachments, maxPostPoints, maxRubricRows, maxTimeLimitMinutes, type ClassAppearance, type ClassFields, type PostFields } from "@examinus/domain/classes";
+import { cleanAttachment, cleanResourceUrl, maxAttachments, maxResources, maxPostPoints, maxRubricRows, maxTimeLimitMinutes, type ClassAppearance, type ClassFields, type PostFields, type ResourceFields } from "@examinus/domain/classes";
 import { Context, Effect, Layer } from "effect";
 import { newId } from "../../platform/ids.ts";
 import type { Actor } from "../auth/Session.ts";
-import type { AnnouncementItem, ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, ResourceItem, StudentItem } from "../../database/schemas/index.ts";
 import { classColumns } from "./mappers.ts";
 import { ClassRepo } from "./Repo.ts";
 import { ClassRoster } from "./Roster.ts";
@@ -18,7 +18,7 @@ export type ClassWithRoster = { row: ClassItem; studentIds: string[] };
 // What a post is made of once it is checked: an announcement needs text, an assignment or activity a title, a
 // deadline only goes with the latter two, and each attachment's address is checked again here (one that isn't
 // valid is refused, not dropped).
-const postValues = Effect.fn("ClassService.postValues")(function* (post: PostFields) {
+export const postValues = Effect.fn("ClassService.postValues")(function* (post: PostFields) {
   const body = post.body.trim();
   const title = post.kind === "announcement" ? "" : post.title.trim();
   if (post.kind === "announcement" ? !body : !title)
@@ -68,7 +68,7 @@ export class ClassService extends Context.Service<
     readonly membership: (userId: string, classId: string) => Effect.Effect<{ cls: ClassItem; studentId: string } | null>;
     readonly list: (actor: Actor) => Effect.Effect<ClassWithRoster[]>;
     // The class's announcements, newest first.
-    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<AnnouncementItem[], NotFound>;
+    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<(AnnouncementItem & { authorName: string })[], NotFound>;
     readonly postAnnouncement: (actor: Actor, classId: string, post: PostFields) => Effect.Effect<AnnouncementItem, NotFound>;
     readonly updateAnnouncement: (
       actor: Actor,
@@ -77,6 +77,10 @@ export class ClassService extends Context.Service<
       post: PostFields,
     ) => Effect.Effect<AnnouncementItem, NotFound>;
     readonly deleteAnnouncement: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<void, NotFound>;
+    // The class's Resources shelf, oldest first; adding checks the address, and a shelf holds `maxResources`.
+    readonly resources: (actor: Actor, classId: string) => Effect.Effect<ResourceItem[], NotFound>;
+    readonly addResource: (actor: Actor, classId: string, fields: ResourceFields) => Effect.Effect<ResourceItem, NotFound>;
+    readonly deleteResource: (actor: Actor, classId: string, resourceId: string) => Effect.Effect<void, NotFound>;
     // The teacher's class with its roster, or null when it isn't theirs (or is archived).
     readonly get: (actor: Actor, classId: string) => Effect.Effect<ClassWithRoster | null>;
     readonly create: (actor: Actor, fields: ClassFields) => Effect.Effect<{ id: string }>;
@@ -136,6 +140,32 @@ export class ClassService extends Context.Service<
           yield* ownClass(actor, classId);
           const removed = yield* repo.deleteAnnouncement(classId, announcementId);
           if (!removed) return yield* new NotFound({ message: "That announcement doesn't exist." });
+        }),
+        resources: Effect.fn("ClassService.resources")(function* (actor, classId) {
+          yield* ownClass(actor, classId);
+          return yield* repo.resources(classId);
+        }),
+        addResource: Effect.fn("ClassService.addResource")(function* (actor, classId, fields) {
+          yield* ownClass(actor, classId);
+          const title = fields.title.trim();
+          if (!title) return yield* new NotFound({ message: "Give the resource a title." });
+          const url = cleanResourceUrl(fields.kind, fields.url);
+          if (!url) return yield* new NotFound({ message: fields.kind === "file" ? "That file isn't valid." : "That address isn't valid for this kind of resource." });
+          if ((yield* repo.resources(classId)).length >= maxResources)
+            return yield* new NotFound({ message: `A class can have up to ${maxResources} resources.` });
+          return yield* repo.insertResource({
+            id: newId("rs"),
+            classId,
+            kind: fields.kind,
+            url,
+            title,
+            detail: fields.detail.trim().slice(0, 150),
+          });
+        }),
+        deleteResource: Effect.fn("ClassService.deleteResource")(function* (actor, classId, resourceId) {
+          yield* ownClass(actor, classId);
+          const removed = yield* repo.deleteResource(classId, resourceId);
+          if (!removed) return yield* new NotFound({ message: "That resource doesn't exist." });
         }),
         list: Effect.fn("ClassService.list")(function* (actor) {
           return yield* withRosters(yield* repo.ofTeacher(actor));

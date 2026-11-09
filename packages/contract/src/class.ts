@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { Announcement, ClassAppearance, ClassFields, PostFields, RosterStudent, TeacherClass } from "@examinus/domain/classes";
+import { Announcement, ClassAppearance, ClassFields, ClassResource, ResourceFields, PostFields, RosterStudent, TeacherClass } from "@examinus/domain/classes";
 import { Forbidden, NotFound } from "./errors.ts";
 import { AuthMiddleware } from "./middleware.ts";
 import { ClassId } from "./shared.ts";
@@ -37,6 +37,17 @@ export class ClassRpcs extends RpcGroup.make(
   }),
   Rpc.make("deleteAnnouncement", {
     payload: { ...ClassId, announcementId: Schema.String },
+    error: Schema.Union([Forbidden, NotFound]),
+  }),
+  // The class's Resources shelf (links to a textbook, the syllabus, a form), oldest first.
+  Rpc.make("resources", { payload: ClassId, success: Schema.Array(ClassResource), error: Schema.Union([Forbidden, NotFound]) }),
+  Rpc.make("addResource", {
+    payload: { ...ClassId, resource: ResourceFields },
+    success: ClassResource,
+    error: Schema.Union([Forbidden, NotFound]),
+  }),
+  Rpc.make("deleteResource", {
+    payload: { ...ClassId, resourceId: Schema.String },
     error: Schema.Union([Forbidden, NotFound]),
   }),
   // Roster entries in any of the teacher's classes; other ids are left out.
