@@ -2,7 +2,7 @@
 // see an image and which images are still in use. Questions, choices and drawing answers refer to an asset by id
 // inside markdown or jsonb, so "refers to" means the id appears in that text.
 import { assetIdsIn } from "@examinus/domain/asset";
-import { and, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import type { Actor } from "../auth/Session.ts";
 import { Database, type Drizzle } from "../../platform/Database.ts";
@@ -13,6 +13,7 @@ import {
   attempts,
   bankQuestions,
   classAnnouncements,
+  classResources,
   classMembers,
   classes,
   postSubmissions,
@@ -215,7 +216,16 @@ export class AssetRepo extends Context.Service<
               .innerJoin(students, eq(students.id, classMembers.studentId))
               .where(eq(students.userId, userId)),
           );
-          return rows.map((r) => r.text).join("\n");
+          // The files on those classes' Resources shelves.
+          const shelf = yield* db.query((d) =>
+            d
+              .select({ text: classResources.url })
+              .from(classResources)
+              .innerJoin(classMembers, eq(classMembers.classId, classResources.classId))
+              .innerJoin(students, eq(students.id, classMembers.studentId))
+              .where(eq(students.userId, userId)),
+          );
+          return [...rows, ...shelf].map((r) => r.text).join("\n");
         }),
 
         createdBefore: Effect.fn("AssetRepo.createdBefore")(function* (cutoff) {
@@ -239,6 +249,8 @@ export class AssetRepo extends Context.Service<
               ...(
                 await d.select({ text: sql<string>`${classAnnouncements.attachments}::text` }).from(classAnnouncements).where(mentionsAsset(classAnnouncements.attachments))
               ).map((r) => r.text),
+              // Files on a class's Resources shelf.
+              ...(await d.select({ text: classResources.url }).from(classResources).where(like(classResources.url, "asset:%"))).map((r) => r.text),
               ...(
                 await d.select({ text: sql<string>`${answers.value}::text` }).from(answers).where(mentionsAsset(answers.value))
               ).map((r) => r.text),

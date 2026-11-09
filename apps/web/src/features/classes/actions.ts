@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Result, Schema, SchemaGetter } from "effect";
 import { subjectAreaNames } from "@examinus/domain/roles";
-import { attachmentKinds, classColorNames, type PostFields } from "@examinus/domain/classes";
+import { attachmentKinds, classColorNames, resourceKinds, type PostFields } from "@examinus/domain/classes";
 import { parseForm } from "@/lib/validate";
 import {
   archiveClass,
@@ -14,6 +14,8 @@ import {
   postAnnouncement,
   updateAnnouncement,
   deleteAnnouncement,
+  addResource,
+  deleteResource,
   updateClass,
   customizeClass,
   connectClassroom,
@@ -192,6 +194,25 @@ export async function updateAnnouncementAction(
 
 export async function deleteAnnouncementAction(classId: string, announcementId: string): Promise<ClassFormState> {
   const error = await deleteAnnouncement(classId, announcementId);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+// The "Add resource" dialog: a kind, an address, a title and one short line under it.
+export async function addResourceAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const rawKind = String(formData.get("kind") ?? "link");
+  const kind = (resourceKinds as readonly string[]).includes(rawKind) ? (rawKind as (typeof resourceKinds)[number]) : "link";
+  const url = String(formData.get("url") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  if (!url) return { error: kind === "file" ? "Choose a file to upload." : "Paste the address of the resource." };
+  if (!title) return { error: "Give the resource a title." };
+  const error = await addResource(classId, { kind, url, title, detail: String(formData.get("detail") ?? "").trim() });
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function deleteResourceAction(classId: string, resourceId: string): Promise<ClassFormState> {
+  const error = await deleteResource(classId, resourceId);
   if (error) return { error };
   revalidatePath(`/teacher/classes/${classId}`, "layout");
 }

@@ -28,6 +28,30 @@ export const WorkHandlers = WorkRpcs.toLayer(
         const me = yield* requireActor({ class: ["read"] });
         return yield* work.list(me.actor, classId, announcementId);
       }),
+      "work.recordScores": Effect.fn("work.recordScores")(function* ({ classId }) {
+        const me = yield* requireActor({ class: ["read"] });
+        return yield* work.recordScores(me.actor, classId);
+      }),
+      "work.recordMine": Effect.fn("work.recordMine")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return yield* work.recordMine(me.actor, classId);
+      }),
+      "work.myComments": Effect.fn("work.myComments")(function* ({ classId, announcementId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return yield* work.myComments(me.actor, classId, announcementId);
+      }),
+      "work.addMyComment": Effect.fn("work.addMyComment")(function* ({ classId, announcementId, body }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return { ...(yield* work.addMyComment(me.actor, classId, announcementId, body)), authorName: me.name };
+      }),
+      "work.studentComments": Effect.fn("work.studentComments")(function* ({ classId, announcementId, studentId }) {
+        const me = yield* requireActor({ class: ["read"] });
+        return yield* work.studentComments(me.actor, classId, announcementId, studentId);
+      }),
+      "work.addStudentComment": Effect.fn("work.addStudentComment")(function* ({ classId, announcementId, studentId, body }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return { ...(yield* work.addStudentComment(me.actor, classId, announcementId, studentId, body)), authorName: me.name };
+      }),
       "work.grade": Effect.fn("work.grade")(function* ({ classId, announcementId, studentId, score }) {
         const me = yield* requireActor({ class: ["update"] });
         yield* work.grade(me.actor, classId, announcementId, studentId, score);

@@ -1,5 +1,5 @@
 import { classColors, type ClassColor, type ClassFields } from "@examinus/domain/classes";
-import type { AnnouncementItem, ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, ResourceItem, StudentItem } from "../../database/schemas/index.ts";
 
 const classColorOf = (value: string | null): ClassColor | null => (value && value in classColors ? (value as ClassColor) : null);
 
@@ -61,4 +61,12 @@ export const toAnnouncement = ({ id, kind, title, body, dueAt, attachments, poin
   timeLimitMinutes,
   rubric,
   createdAt: createdAt.toISOString(),
+});
+
+export const toResource = ({ id, kind, url, title, detail }: ResourceItem) => ({
+  id,
+  kind: (kind === "youtube" || kind === "drive" || kind === "file" ? kind : "link") as "link" | "youtube" | "drive" | "file",
+  url,
+  title,
+  detail,
 });

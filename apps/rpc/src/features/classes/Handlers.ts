@@ -7,7 +7,7 @@ import { Effect, Layer } from "effect";
 import { requireActor, requirePermission } from "../auth/Session.ts";
 import { ClassroomService, type GoogleUnavailable } from "./Classroom.ts";
 import { EnrollmentService } from "./Enrollment.ts";
-import { toAnnouncement, toClassInfo, toRosterStudent, toTeacherClass } from "./mappers.ts";
+import { toAnnouncement, toClassInfo, toResource, toRosterStudent, toTeacherClass } from "./mappers.ts";
 import { ClassService } from "./Service.ts";
 
 export const ClassHandlers = ClassRpcs.toLayer(
@@ -45,6 +45,21 @@ export const ClassHandlers = ClassRpcs.toLayer(
       "class.deleteAnnouncement": Effect.fn("class.deleteAnnouncement")(function* ({ classId, announcementId }) {
         const me = yield* requireActor({ class: ["update"] });
         yield* classes.deleteAnnouncement(me.actor, classId, announcementId);
+      }),
+
+      "class.resources": Effect.fn("class.resources")(function* ({ classId }) {
+        const me = yield* requireActor({ class: ["read"] });
+        return (yield* classes.resources(me.actor, classId)).map(toResource);
+      }),
+
+      "class.addResource": Effect.fn("class.addResource")(function* ({ classId, resource }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return toResource(yield* classes.addResource(me.actor, classId, resource));
+      }),
+
+      "class.deleteResource": Effect.fn("class.deleteResource")(function* ({ classId, resourceId }) {
+        const me = yield* requireActor({ class: ["update"] });
+        yield* classes.deleteResource(me.actor, classId, resourceId);
       }),
 
       "class.create": Effect.fn("class.create")(function* (fields) {

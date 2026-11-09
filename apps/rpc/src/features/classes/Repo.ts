@@ -9,6 +9,7 @@ import {
   accounts,
   attempts,
   classAnnouncements,
+  classResources,
   classes,
   classMembers,
   quizSessions,
@@ -18,6 +19,7 @@ import {
   users,
   type AnnouncementItem,
   type ClassItem,
+  type ResourceItem,
   type StudentItem,
 } from "../../database/schemas/index.ts";
 
@@ -46,6 +48,11 @@ export class ClassRepo extends Context.Service<
     ) => Effect.Effect<AnnouncementItem | null>;
     // Deletes the class's announcement; false when it isn't there.
     readonly deleteAnnouncement: (classId: string, id: string) => Effect.Effect<boolean>;
+    // A class's Resources shelf, oldest first.
+    readonly resources: (classId: string) => Effect.Effect<ResourceItem[]>;
+    readonly insertResource: (row: typeof classResources.$inferInsert) => Effect.Effect<ResourceItem>;
+    // Removes one resource from the class's shelf; false when it isn't there.
+    readonly deleteResource: (classId: string, id: string) => Effect.Effect<boolean>;
     // The teacher's classes that aren't archived, by course code and section.
     readonly ofTeacher: (actor: Actor) => Effect.Effect<ClassItem[]>;
     // The members of the classes, in the order they joined.
@@ -154,6 +161,24 @@ export class ClassRepo extends Context.Service<
               .delete(classAnnouncements)
               .where(and(eq(classAnnouncements.classId, classId), eq(classAnnouncements.id, id)))
               .returning({ id: classAnnouncements.id }),
+          );
+          return removed.length > 0;
+        }),
+        resources: Effect.fn("ClassRepo.resources")(function* (classId) {
+          return yield* db.query((d) =>
+            d.select().from(classResources).where(eq(classResources.classId, classId)).orderBy(asc(classResources.createdAt)),
+          );
+        }),
+        insertResource: Effect.fn("ClassRepo.insertResource")(function* (row) {
+          const [created] = yield* db.query((d) => d.insert(classResources).values(row).returning());
+          return created!;
+        }),
+        deleteResource: Effect.fn("ClassRepo.deleteResource")(function* (classId, id) {
+          const removed = yield* db.query((d) =>
+            d
+              .delete(classResources)
+              .where(and(eq(classResources.classId, classId), eq(classResources.id, id)))
+              .returning({ id: classResources.id }),
           );
           return removed.length > 0;
         }),

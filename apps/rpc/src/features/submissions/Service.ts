@@ -1,6 +1,6 @@
 import { Conflict, Forbidden, NotFound } from "@examinus/contract/errors";
 import { cleanAttachment, maxAttachments, type Attachment } from "@examinus/domain/classes";
-import { submissionStatus, type MyWork, type MyWorkStatus, type PostWork } from "@examinus/domain/submissions";
+import { submissionStatus, type MyRecordAssignment, type MyWork, type MyWorkStatus, type PostWork, type PrivateComment, type RecordAssignment } from "@examinus/domain/submissions";
 import { Context, Effect, Layer } from "effect";
 import { newId } from "../../platform/ids.ts";
 import type { AnnouncementItem, SubmissionItem } from "../../database/schemas/index.ts";
@@ -10,6 +10,17 @@ import { ClassService } from "../classes/Service.ts";
 import { SubmissionRepo } from "./Repo.ts";
 
 type Missing = Forbidden | NotFound;
+
+const toPrivateComment = (c: { id: string; authorName: string; fromTeacher: boolean; body: string; createdAt: Date }): PrivateComment => ({
+  id: c.id,
+  authorName: c.authorName,
+  fromTeacher: c.fromTeacher,
+  body: c.body,
+  createdAt: c.createdAt.toISOString(),
+});
+
+// What goes into the class record: assignments worth points (activities have none).
+export const countsInRecord = (post: AnnouncementItem) => post.kind === "assignment" && post.points !== null && post.points > 0;
 
 // A student's view of their own work. The score stays hidden until the teacher returns it.
 export const toMyWork = (post: AnnouncementItem, sub: SubmissionItem | null): MyWork => {
@@ -39,6 +50,14 @@ export class SubmissionService extends Context.Service<
     readonly classMine: (actor: Actor, classId: string) => Effect.Effect<MyWorkStatus[], NotFound>;
     readonly turnIn: (actor: Actor, classId: string, announcementId: string, attachments: readonly Attachment[]) => Effect.Effect<MyWork, NotFound | Conflict>;
     readonly unsubmit: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<MyWork, NotFound | Conflict>;
+    // Assignments worth points, for the class record: the teacher's (everyone's graded scores) and the student's own.
+    readonly recordScores: (actor: Actor, classId: string) => Effect.Effect<RecordAssignment[], NotFound>;
+    readonly recordMine: (actor: Actor, classId: string) => Effect.Effect<MyRecordAssignment[], NotFound>;
+    // The private thread between a student and the teacher on a post.
+    readonly myComments: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<PrivateComment[], NotFound>;
+    readonly addMyComment: (actor: Actor, classId: string, announcementId: string, body: string) => Effect.Effect<PrivateComment, NotFound>;
+    readonly studentComments: (actor: Actor, classId: string, announcementId: string, studentId: string) => Effect.Effect<PrivateComment[], NotFound>;
+    readonly addStudentComment: (actor: Actor, classId: string, announcementId: string, studentId: string, body: string) => Effect.Effect<PrivateComment, NotFound>;
     readonly list: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<PostWork, NotFound>;
     readonly grade: (actor: Actor, classId: string, announcementId: string, studentId: string, score: number | null) => Effect.Effect<void, NotFound | Conflict>;
     readonly returnWork: (actor: Actor, classId: string, announcementId: string, studentIds: readonly string[] | null) => Effect.Effect<number, NotFound>;
@@ -85,6 +104,68 @@ export class SubmissionService extends Context.Service<
             const w = toMyWork(post, subs.find((s) => s.announcementId === post.id) ?? null);
             return { announcementId: post.id, status: w.status, late: w.late, score: w.score };
           });
+        }),
+
+        recordScores: Effect.fn("SubmissionService.recordScores")(function* (actor, classId) {
+          yield* classes.ownClass(actor, classId);
+          const posts = (yield* repo.workOf(classId)).filter(countsInRecord);
+          const subs = yield* repo.forPosts(posts.map((p) => p.id));
+          return posts.map((post) => ({
+            announcementId: post.id,
+            title: post.title,
+            points: post.points!,
+            dueAt: post.dueAt?.toISOString() ?? null,
+            createdAt: post.createdAt.toISOString(),
+            scores: subs.filter((x) => x.announcementId === post.id && x.score !== null).map((x) => ({ studentId: x.studentId, score: x.score })),
+          }));
+        }),
+
+        recordMine: Effect.fn("SubmissionService.recordMine")(function* (actor, classId) {
+          const member = yield* classRepo.membership(actor.id, classId);
+          if (!member) return yield* new NotFound({ message: "You're not in that class." });
+          const posts = (yield* repo.workOf(classId)).filter(countsInRecord);
+          const subs = yield* repo.forStudent(posts.map((p) => p.id), member.studentId);
+          return posts.map((post) => {
+            const sub = subs.find((x) => x.announcementId === post.id) ?? null;
+            return {
+              announcementId: post.id,
+              title: post.title,
+              points: post.points!,
+              dueAt: post.dueAt?.toISOString() ?? null,
+              createdAt: post.createdAt.toISOString(),
+              turnedIn: sub?.turnedInAt != null,
+              // Hidden until the teacher returns the work.
+              score: sub?.returnedAt ? sub.score : null,
+            };
+          });
+        }),
+
+        myComments: Effect.fn("SubmissionService.myComments")(function* (actor, classId, announcementId) {
+          const { studentId } = yield* asStudent(actor, classId, announcementId);
+          return (yield* repo.comments(announcementId, studentId)).map(toPrivateComment);
+        }),
+
+        addMyComment: Effect.fn("SubmissionService.addMyComment")(function* (actor, classId, announcementId, body) {
+          const { studentId } = yield* asStudent(actor, classId, announcementId);
+          const text = body.trim();
+          if (!text) return yield* new NotFound({ message: "Write a comment first." });
+          const row = yield* repo.insertComment({ id: newId("pc"), announcementId, studentId, authorId: actor.id, fromTeacher: false, body: text });
+          return toPrivateComment({ ...row, authorName: "" });
+        }),
+
+        studentComments: Effect.fn("SubmissionService.studentComments")(function* (actor, classId, announcementId, studentId) {
+          yield* asTeacher(actor, classId, announcementId);
+          if (!(yield* repo.roster(classId)).some((s) => s.studentId === studentId)) return yield* new NotFound({ message: "That student isn't in this class." });
+          return (yield* repo.comments(announcementId, studentId)).map(toPrivateComment);
+        }),
+
+        addStudentComment: Effect.fn("SubmissionService.addStudentComment")(function* (actor, classId, announcementId, studentId, body) {
+          yield* asTeacher(actor, classId, announcementId);
+          if (!(yield* repo.roster(classId)).some((s) => s.studentId === studentId)) return yield* new NotFound({ message: "That student isn't in this class." });
+          const text = body.trim();
+          if (!text) return yield* new NotFound({ message: "Write a comment first." });
+          const row = yield* repo.insertComment({ id: newId("pc"), announcementId, studentId, authorId: actor.id, fromTeacher: true, body: text });
+          return toPrivateComment({ ...row, authorName: "" });
         }),
 
         turnIn: Effect.fn("SubmissionService.turnIn")(function* (actor, classId, announcementId, attachments) {

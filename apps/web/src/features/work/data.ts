@@ -1,6 +1,7 @@
 import "server-only";
 import { Result } from "effect";
 import type { Attachment } from "@examinus/domain/classes";
+import type { PrivateComment } from "@examinus/domain/submissions";
 import { apiCall, messageOf } from "@/lib/api/helpers";
 import { requirePermission } from "@/lib/auth/dal";
 
@@ -29,6 +30,20 @@ export async function unsubmit(classId: string, announcementId: string) {
   return messageOf(await apiCall((api) => api["work.unsubmit"]({ classId, announcementId })));
 }
 
+// The private thread between the student and the teacher on a post, oldest first.
+export async function getMyComments(classId: string, announcementId: string): Promise<readonly PrivateComment[]> {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["work.myComments"]({ classId, announcementId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+// The new comment, or what went wrong.
+export async function addMyComment(classId: string, announcementId: string, body: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["work.addMyComment"]({ classId, announcementId, body }));
+  return Result.isSuccess(result) ? { ok: result.success } : { error: messageOf(result) ?? "The comment couldn't be sent." };
+}
+
 // --- The teacher's side ---
 
 export async function getPostWork(classId: string, announcementId: string) {
@@ -50,4 +65,17 @@ export async function returnWork(classId: string, announcementId: string, studen
 export async function setAccepting(classId: string, announcementId: string, accepting: boolean) {
   await requirePermission({ class: ["update"] });
   return messageOf(await apiCall((api) => api["work.setAccepting"]({ classId, announcementId, accepting })));
+}
+
+// One student's private thread on a post, from the teacher's side.
+export async function getStudentComments(classId: string, announcementId: string, studentId: string) {
+  await requirePermission({ class: ["read"] });
+  const result = await apiCall((api) => api["work.studentComments"]({ classId, announcementId, studentId }));
+  return Result.isSuccess(result) ? { ok: result.success } : { error: messageOf(result) ?? "The comments couldn't be loaded." };
+}
+
+export async function addStudentComment(classId: string, announcementId: string, studentId: string, body: string) {
+  await requirePermission({ class: ["update"] });
+  const result = await apiCall((api) => api["work.addStudentComment"]({ classId, announcementId, studentId, body }));
+  return Result.isSuccess(result) ? { ok: result.success } : { error: messageOf(result) ?? "The comment couldn't be sent." };
 }

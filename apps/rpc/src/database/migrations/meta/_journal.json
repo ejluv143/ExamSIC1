@@ -260,6 +260,20 @@
       "when": 1794146666576,
       "tag": "0036_post_submissions",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794227993469,
+      "tag": "0037_class_resources",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794232421721,
+      "tag": "0038_post_comments",
+      "breakpoints": true
     }
   ]
 }

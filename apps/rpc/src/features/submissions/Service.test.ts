@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect";
 import { harness, stub } from "../../testing/config.ts";
 import { classItem, fakeClassRepo, studentItem, type ClassWorld } from "../classes/fixtures.ts";
 import { ClassService } from "../classes/Service.ts";
-import type { AnnouncementItem, SubmissionItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, CommentItem, SubmissionItem } from "../../database/schemas/index.ts";
 import type { Actor } from "../auth/Session.ts";
 import { SubmissionRepo } from "./Repo.ts";
 import { SubmissionService } from "./Service.ts";
@@ -43,6 +43,7 @@ const world: ClassWorld = {
 
 const setup = (posts: AnnouncementItem[] = [post()]) => {
   const subs: SubmissionItem[] = [];
+  const comments: CommentItem[] = [];
   const upsert = (announcementId: string, studentId: string, set: Partial<SubmissionItem>) => {
     let row = subs.find((s) => s.announcementId === announcementId && s.studentId === studentId);
     if (!row) subs.push((row = { id: `sub${subs.length}`, announcementId, studentId, attachments: [], turnedInAt: null, score: null, returnedAt: null, createdAt: epoch, updatedAt: epoch }));
@@ -68,6 +69,14 @@ const setup = (posts: AnnouncementItem[] = [post()]) => {
           const rows = subs.filter((s) => s.announcementId === id && s.score !== null && (!studentIds || studentIds.includes(s.studentId)));
           for (const r of rows) r.returnedAt = at;
           return rows.length;
+        }),
+      comments: (announcementId, studentId) =>
+        Effect.sync(() => comments.filter((c) => c.announcementId === announcementId && c.studentId === studentId).map((c) => ({ ...c, authorName: c.fromTeacher ? "Mr. Teacher" : "Ana Reyes" }))),
+      insertComment: (row) =>
+        Effect.sync(() => {
+          const made: CommentItem = { ...row, fromTeacher: row.fromTeacher ?? false, createdAt: epoch };
+          comments.push(made);
+          return made;
         }),
       setAccepting: (_c, id, accepting) => Effect.sync(() => void Object.assign(posts.find((p) => p.id === id)!, { acceptingSubmissions: accepting })),
     }),
@@ -135,5 +144,30 @@ describe("SubmissionService", () => {
     const { fail } = setup([post({ points: 20 }), post({ id: "p2", points: null })]);
     expect((await fail(Effect.flatMap(svc, (s) => s.grade(actor("t1"), "c1", "p1", "s1", 21))))._tag).toBe("Conflict");
     expect((await fail(Effect.flatMap(svc, (s) => s.grade(actor("t1"), "c1", "p2", "s1", 1))))._tag).toBe("Conflict");
+  });
+
+  test("a private thread is between one student and the teacher: classmates and other teachers can't read it", async () => {
+    const { run, fail } = setup();
+    await run(Effect.flatMap(svc, (s) => s.addMyComment(actor("u1"), "c1", "p1", "  Is a Word file okay?  ")));
+    await run(Effect.flatMap(svc, (s) => s.addStudentComment(actor("t1"), "c1", "p1", "s1", "Yes.")));
+    const mine = await run(Effect.flatMap(svc, (s) => s.myComments(actor("u1"), "c1", "p1")));
+    expect(mine.map((c) => [c.fromTeacher, c.body])).toEqual([
+      [false, "Is a Word file okay?"],
+      [true, "Yes."],
+    ]);
+    // A classmate has their own, empty thread; the teacher sees each student's thread apart.
+    expect(await run(Effect.flatMap(svc, (s) => s.myComments(actor("u2"), "c1", "p1")))).toEqual([]);
+    expect(await run(Effect.flatMap(svc, (s) => s.studentComments(actor("t1"), "c1", "p1", "s2")))).toEqual([]);
+    expect(await run(Effect.flatMap(svc, (s) => s.studentComments(actor("t1"), "c1", "p1", "s1")))).toHaveLength(2);
+    // Another teacher, a student outside the class and a student who isn't on the roster are all refused.
+    expect((await fail(Effect.flatMap(svc, (s) => s.studentComments(actor("t2"), "c1", "p1", "s1"))))._tag).toBe("NotFound");
+    expect((await fail(Effect.flatMap(svc, (s) => s.myComments(actor("u9"), "c1", "p1"))))._tag).toBe("NotFound");
+    expect((await fail(Effect.flatMap(svc, (s) => s.studentComments(actor("t1"), "c1", "p1", "s9"))))._tag).toBe("NotFound");
+  });
+
+  test("a blank comment isn't sent", async () => {
+    const { fail } = setup();
+    expect((await fail(Effect.flatMap(svc, (s) => s.addMyComment(actor("u1"), "c1", "p1", "   "))))._tag).toBe("NotFound");
+    expect((await fail(Effect.flatMap(svc, (s) => s.addStudentComment(actor("t1"), "c1", "p1", "s1", ""))))._tag).toBe("NotFound");
   });
 });

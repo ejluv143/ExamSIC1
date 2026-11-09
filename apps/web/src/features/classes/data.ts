@@ -1,6 +1,6 @@
 import "server-only";
 import { Result } from "effect";
-import type { ClassAppearance, ClassInfo, RosterStudent, ClassFields, PostFields } from "@examinus/domain/classes";
+import type { ClassAppearance, ClassInfo, RosterStudent, ClassFields, PostFields, ResourceFields } from "@examinus/domain/classes";
 import type { Class, Student } from "./types";
 import { requirePermission, requireStudent } from "@/lib/auth/dal";
 import { apiCall, apiValue, messageOf } from "@/lib/api/helpers";
@@ -110,6 +110,23 @@ export async function updateAnnouncement(classId: string, announcementId: string
 export async function deleteAnnouncement(classId: string, announcementId: string) {
   await requirePermission({ class: ["update"] });
   return messageOf(await apiCall((api) => api["class.deleteAnnouncement"]({ classId, announcementId })));
+}
+
+// The class's Resources shelf, oldest first.
+export async function getResources(classId: string) {
+  await requirePermission({ class: ["read"] });
+  const result = await apiCall((api) => api["class.resources"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+export async function addResource(classId: string, resource: ResourceFields) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.addResource"]({ classId, resource })));
+}
+
+export async function deleteResource(classId: string, resourceId: string) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.deleteResource"]({ classId, resourceId })));
 }
 
 // Asked once per request, however many functions on the page need it.

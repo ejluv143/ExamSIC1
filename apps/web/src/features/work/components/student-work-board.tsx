@@ -2,11 +2,13 @@
 
 import { useState, useTransition } from "react";
 import clsx from "clsx";
-import { Mail, Users } from "lucide-react";
-import { submissionStatusLabel, type PostWork, type StudentWork } from "@examinus/domain/submissions";
+import { Mail, MessageSquare, Users } from "lucide-react";
+import { submissionStatusLabel, type PostWork, type PrivateComment, type StudentWork } from "@examinus/domain/submissions";
 import { Badge, Button, Switch } from "@/components/ui";
+import { Dialog } from "@/components/dialog";
 import { AttachmentList } from "@/features/classes/components/announcements";
-import { gradeAction, returnWorkAction, setAcceptingAction } from "../actions";
+import { addStudentCommentAction, gradeAction, loadStudentCommentsAction, returnWorkAction, setAcceptingAction } from "../actions";
+import { PrivateComments } from "./private-comments";
 
 const tone = { assigned: "neutral", missing: "danger", turned_in: "success", returned: "info" } as const;
 const order = { turned_in: 0, returned: 1, missing: 2, assigned: 3 } as const;
@@ -20,6 +22,54 @@ function Initials({ name }: { name: string }) {
     <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary">
       {letters}
     </span>
+  );
+}
+
+// One student's private thread on this post, in a dialog. It is loaded when the dialog opens.
+function StudentComments({ classId, announcementId, row }: { classId: string; announcementId: string; row: StudentWork }) {
+  const [open, setOpen] = useState(false);
+  const [comments, setComments] = useState<readonly PrivateComment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  function show() {
+    setOpen(true);
+    setError(null);
+    void loadStudentCommentsAction(classId, announcementId, row.studentId).then((r) => ("error" in r ? setError(r.error) : setComments(r.ok)));
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={show}
+        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary-soft focus-visible:outline-2 focus-visible:outline-primary"
+      >
+        <MessageSquare className="size-3.5" aria-hidden /> Private comments
+      </button>
+      <Dialog
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setComments(null);
+        }}
+        title={`Private comments · ${row.name}`}
+      >
+        {error ? (
+          <p role="alert" className="text-sm text-danger">
+            {error}
+          </p>
+        ) : comments === null ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : (
+          <PrivateComments
+            bare
+            initial={comments}
+            send={addStudentCommentAction.bind(null, classId, announcementId, row.studentId)}
+            me={{ name: "You", fromTeacher: true }}
+            who={`Only you and ${row.name}`}
+            placeholder={`Reply to ${row.name}…`}
+          />
+        )}
+      </Dialog>
+    </>
   );
 }
 
@@ -172,11 +222,12 @@ export function StudentWorkBoard({ classId, announcementId, title, work }: { cla
                 </div>
                 <AttachmentList attachments={r.attachments} single />
                 {r.attachments.length === 0 && r.status !== "assigned" && r.status !== "missing" && <p className="mt-3 text-xs text-muted">Marked as done.</p>}
-                <div className="mt-3">
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <Badge tone={tone[r.status]}>
                     {submissionStatusLabel[r.status]}
                     {r.late && " late"}
                   </Badge>
+                  <StudentComments classId={classId} announcementId={announcementId} row={r} />
                 </div>
               </li>
             ))}

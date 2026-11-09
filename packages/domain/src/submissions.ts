@@ -73,3 +73,40 @@ export const PostWork = Schema.Struct({
   rows: Schema.Array(StudentWork),
 });
 export type PostWork = typeof PostWork.Type;
+
+// Assignments worth points go into the class record like quizzes do. The teacher gets every student's graded score
+// (whether or not it is returned yet); a student gets only their own, and only once it is returned.
+export const RecordAssignment = Schema.Struct({
+  announcementId: Schema.String,
+  title: Schema.String,
+  points: Schema.Int,
+  dueAt: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  // Roster id and graded score (null: not graded yet).
+  scores: Schema.Array(Schema.Struct({ studentId: Schema.String, score: Schema.NullOr(Schema.Int) })),
+});
+export type RecordAssignment = typeof RecordAssignment.Type;
+
+export const MyRecordAssignment = Schema.Struct({
+  announcementId: Schema.String,
+  title: Schema.String,
+  points: Schema.Int,
+  dueAt: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  turnedIn: Schema.Boolean,
+  // The returned score; null while it is still with the teacher.
+  score: Schema.NullOr(Schema.Int),
+});
+export type MyRecordAssignment = typeof MyRecordAssignment.Type;
+
+// The private conversation between one student and the teacher about an assignment or activity.
+export const maxCommentLength = 2000;
+export const PrivateComment = Schema.Struct({
+  id: Schema.String,
+  authorName: Schema.String,
+  fromTeacher: Schema.Boolean,
+  body: Schema.String,
+  createdAt: Schema.String,
+});
+export type PrivateComment = typeof PrivateComment.Type;
+export const CommentBody = Schema.String.check(Schema.isMaxLength(maxCommentLength));

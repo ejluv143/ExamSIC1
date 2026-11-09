@@ -5,9 +5,12 @@ import { Database } from "../../platform/Database.ts";
 import {
   classAnnouncements,
   classMembers,
+  postComments,
   postSubmissions,
   students,
+  users,
   type AnnouncementItem,
+  type CommentItem,
   type SubmissionItem,
 } from "../../database/schemas/index.ts";
 
@@ -22,6 +25,10 @@ export class SubmissionRepo extends Context.Service<
     readonly workOf: (classId: string) => Effect.Effect<AnnouncementItem[]>;
     readonly roster: (classId: string) => Effect.Effect<RosterName[]>;
     readonly forPost: (announcementId: string) => Effect.Effect<SubmissionItem[]>;
+    readonly forPosts: (announcementIds: readonly string[]) => Effect.Effect<SubmissionItem[]>;
+    // One student's private thread on a post, oldest first, with the author's name.
+    readonly comments: (announcementId: string, studentId: string) => Effect.Effect<(CommentItem & { authorName: string })[]>;
+    readonly insertComment: (row: typeof postComments.$inferInsert) => Effect.Effect<CommentItem>;
     readonly forStudent: (announcementIds: readonly string[], studentId: string) => Effect.Effect<SubmissionItem[]>;
     readonly turnIn: (row: { id: string; announcementId: string; studentId: string; attachments: Attachment[]; at: Date }) => Effect.Effect<SubmissionItem>;
     // Back to unsubmitted; null when there is nothing turned in to take back (or it was returned).
@@ -59,6 +66,25 @@ export class SubmissionRepo extends Context.Service<
         }),
         forPost: Effect.fn("SubmissionRepo.forPost")(function* (announcementId) {
           return yield* db.query((d) => d.select().from(postSubmissions).where(eq(postSubmissions.announcementId, announcementId)));
+        }),
+        comments: Effect.fn("SubmissionRepo.comments")(function* (announcementId, studentId) {
+          const rows = yield* db.query((d) =>
+            d
+              .select({ comment: postComments, authorName: users.name })
+              .from(postComments)
+              .leftJoin(users, eq(users.id, postComments.authorId))
+              .where(and(eq(postComments.announcementId, announcementId), eq(postComments.studentId, studentId)))
+              .orderBy(asc(postComments.createdAt)),
+          );
+          return rows.map((r) => ({ ...r.comment, authorName: r.authorName ?? "" }));
+        }),
+        insertComment: Effect.fn("SubmissionRepo.insertComment")(function* (row) {
+          const [created] = yield* db.query((d) => d.insert(postComments).values(row).returning());
+          return created!;
+        }),
+        forPosts: Effect.fn("SubmissionRepo.forPosts")(function* (announcementIds) {
+          if (announcementIds.length === 0) return [];
+          return yield* db.query((d) => d.select().from(postSubmissions).where(inArray(postSubmissions.announcementId, [...announcementIds])));
         }),
         forStudent: Effect.fn("SubmissionRepo.forStudent")(function* (announcementIds, studentId) {
           if (announcementIds.length === 0) return [];
