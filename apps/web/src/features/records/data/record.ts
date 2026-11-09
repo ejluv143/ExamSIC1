@@ -5,15 +5,20 @@ import "server-only";
 import { Option, Schema } from "effect";
 import { requireTeacher } from "@/lib/auth/dal";
 import { ClassRecord as ClassRecordSchema } from "@examinus/contract/class-record";
-import { type ClassSessionScores } from "@examinus/contract/session";
-import { blankRecord, courseResult, setDropped, teacherRecord, type ClassRecord } from "@examinus/domain/class-record";
+import { assignmentSession, blankRecord, courseResult, setDropped, teacherRecord, type ClassRecord, type ScoredSession } from "@examinus/domain/class-record";
+import { manilaDate, termOf } from "@examinus/domain/attendance";
 import { classMeetings } from "@/features/attendance/data";
 import { read, write } from "@/lib/api/helpers";
 import { getClass, getClasses, getStudents } from "@/features/classes/data";
 
-// The teacher's sessions for a class with each student's score.
-async function classSessions(classId: string): Promise<readonly ClassSessionScores[]> {
-  return read((api) => api["session.classScores"]({ classId }));
+// What goes into a class's record with each student's score: its quiz and exam sessions, and its assignments worth
+// points (graded scores, whether or not they are returned yet).
+async function classSessions(classId: string): Promise<readonly ScoredSession[]> {
+  const [sessions, assignments] = await Promise.all([
+    read((api) => api["session.classScores"]({ classId })),
+    read((api) => api["work.recordScores"]({ classId })),
+  ]);
+  return [...sessions, ...assignments.map((a) => ({ ...assignmentSession(a), scores: a.scores }))];
 }
 
 export async function getClassRecord(classId: string) {
@@ -35,7 +40,9 @@ export async function getClassRecord(classId: string) {
     // A meeting today or earlier that still needs attendance.
     open: meetings.filter((m) => !m.takenAt).length,
   };
-  return { cls, record, students: roster, linked, pending, linkable, attendanceTaken, attendance };
+  // The term today falls in: the one the page opens on, where a quiz started now is added.
+  const currentTerm = termOf(manilaDate());
+  return { cls, record, students: roster, linked, pending, linkable, attendanceTaken, attendance, currentTerm };
 }
 
 // The teacher's class record as saved, without linked scores or attendance; null before the first save.

@@ -7,6 +7,7 @@ import { CalendarCheck, Download, Link2, Plus, Printer, Save, Settings2, X } fro
 import { Select } from "@/components/select";
 import { Badge, Button, ButtonLink, Card, CardHeader, Field, inputBase, inputClass } from "@/components/ui";
 import {
+  attendancePoints,
   addAttendanceItem,
   addCategory,
   addItem,
@@ -55,8 +56,11 @@ export function RecordEditor({
   linkable,
   attendanceTaken,
   attendance,
+  currentTerm,
 }: {
   cls: Class;
+  // The term the page opens on: today's, where quizzes started now are added.
+  currentTerm: GradingTerm;
   attendanceTaken: boolean;
   attendance: { taken: number; open: number };
   initial: ClassRecord;
@@ -66,7 +70,7 @@ export function RecordEditor({
   linkable: Linkable[];
 }) {
   const [record, setRecord] = useState(initial);
-  const [tab, setTab] = useState<Tab>("midterm");
+  const [tab, setTab] = useState<Tab>(currentTerm);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
@@ -137,7 +141,8 @@ export function RecordEditor({
             <span className="text-muted">
               · {attendance.taken} {attendance.taken === 1 ? "meeting" : "meetings"} taken. No. of Absences and the
               Attendance item come from the roll call (7 lates = 1 absence; excused don&apos;t count). Quiz and exam sessions
-              you start for this class are added by themselves and score as students submit (blue).
+              you start for this class, and assignments worth points, are added by themselves and score as students submit
+              or you grade (blue).
             </span>
           </span>
           <Link href={`/teacher/classes/${cls.id}/attendance`} className="font-medium text-primary hover:underline">
@@ -504,7 +509,7 @@ function TermTab({
         {attendanceTaken ? (
           <>
             No. of Absences comes from <Link href={`/teacher/classes/${classId}/attendance`} className="underline">attendance</Link>{" "}
-            (7 lates = 1 absence). An item set to “From attendance” scores meetings held minus absences.
+            (7 lates = 1 absence). An item set to “From attendance” is worth {attendancePoints} points in each term unless you change its “out of”, lowered by each absence.
           </>
         ) : (
           "Type absences in, or take attendance in Examinus to fill them in."
@@ -595,7 +600,7 @@ function Setup({
                         type="number"
                         min={0}
                         value={item.maxScore}
-                        disabled={!!item.sessionId || item.source === "attendance"}
+                        disabled={!!item.sessionId}
                         onChange={(e) => update((r) => setItemMax(r, term, c.id, item.id, e.target.value))}
                         aria-label="Maximum score"
                         className={`${inputBase} w-20 py-1 text-right`}
@@ -616,10 +621,10 @@ function Setup({
                       options={[
                         { value: "", label: "Typed in" },
                         { value: "attendance", label: "From attendance" },
-                        ...linkable.map((a) => ({ value: a.id, label: `From quiz session: ${a.title}` })),
+                        ...linkable.map((a) => ({ value: a.id, label: `${a.kind === "assignment" ? "From assignment" : "From quiz session"}: ${a.title}` })),
                       ]}
                     />
-                    {item.sessionId && <Link2 className="size-4 text-info" aria-label="Linked to a quiz session" />}
+                    {item.sessionId && <Link2 className="size-4 text-info" aria-label="Linked to a quiz session or assignment" />}
                     <Button
                       variant="ghost"
                       className="px-2"

@@ -11,8 +11,9 @@ export const RecordItem = Schema.Struct({
   maxScore: Schema.Number,
   // Linked to a quiz session: scores fill in from students' submitted attempts.
   sessionId: Schema.NullOr(Schema.String),
-  // "attendance": the score is the term's attendance (meetings held minus absences); maxScore follows it.
+  // "attendance": the score is the term's attendance percentage out of `points` (15 when not set).
   source: Schema.optionalKey(Schema.Literal("attendance")),
+  points: Schema.optionalKey(Schema.Number),
 });
 
 export const RecordCategory = Schema.Struct({

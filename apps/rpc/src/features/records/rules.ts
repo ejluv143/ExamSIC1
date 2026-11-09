@@ -23,7 +23,9 @@ export function cleanRecord(
         title: text(i.title, 80),
         maxScore: num(i.maxScore, 1000) ?? 0,
         sessionId: i.sessionId !== null && sessionIds.has(i.sessionId) ? i.sessionId : null,
-        ...(i.source === "attendance" ? { source: "attendance" as const } : {}),
+        ...(i.source === "attendance"
+          ? { source: "attendance" as const, ...(i.points !== undefined && num(i.points, 1000) !== null ? { points: num(i.points, 1000)! } : {}) }
+          : {}),
       })),
     }));
   const scores: Record<string, Record<string, number | null>> = {};
