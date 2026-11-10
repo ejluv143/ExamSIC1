@@ -1,0 +1,5 @@
+- [x] T1 lockdown.rs state, rules, signals + Rust tests
+- [x] T2 lib.rs wiring: window rules, close guard, watchdog, pending event, clipboard re-clear
+- [x] T3 Web: DesktopLockdown component, desktopSensor, web-platform + student-exam wiring, tests
+- [x] T4 Docs: native-clients-plan D2 status
+- [x] T5 Verify: cargo check/clippy/fmt/test, typecheck, npm test, launch smoke
