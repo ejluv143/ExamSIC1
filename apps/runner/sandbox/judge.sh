@@ -65,7 +65,21 @@ while [ "$n" -lt "$TESTS" ]; do
   mkdir /tmp/run && chmod 0777 /tmp/run && cd /tmp/run || exit 1
   # Each test starts from the original tables, whatever the last one changed.
   if [ -f /work/database.sql ]; then
-    timeout -s KILL "$SEED_LIMIT" su-exec "$STUDENT" php /judge/seed.php /work/database.sql /tmp/run/db.sqlite 2>/tmp/seed.txt || { emit COMPILE /tmp/seed.txt 8000; exit 0; }
+    timeout -s KILL "$SEED_LIMIT" su-exec "$STUDENT" php /judge/seed.php /work/database.sql /tmp/run/db.sqlite 2>/tmp/seed.txt
+    seed=$?
+    if [ "$seed" -ne 0 ]; then
+      # Seeding only runs the question's own tables, so any failure is the question's fault, never the student's: the
+      # message always starts with "The question's tables", which is how the API sends it to the teacher to grade.
+      # 137 is the timeout's SIGKILL (or the kernel's out-of-memory kill), which leaves nothing but "Killed".
+      if [ "$seed" -eq 137 ]; then
+        printf "The question's tables took longer than %s s to create\n" "$SEED_LIMIT" >/tmp/seed.txt
+      elif ! grep -q "^The question's tables" /tmp/seed.txt; then
+        { printf "The question's tables couldn't be created (exit code %s)\n" "$seed"; cat /tmp/seed.txt; } >/tmp/seed-failed.txt
+        mv /tmp/seed-failed.txt /tmp/seed.txt
+      fi
+      emit COMPILE /tmp/seed.txt 8000
+      exit 0
+    fi
   fi
   # SIGKILL on timeout: exit code 137. Output lands in /tmp (a small tmpfs), so endless printing can't fill the disk.
   timeout -s KILL "$LIMIT" su-exec "$STUDENT" $RUN <"/tmp/tests/$n.in" >/tmp/out 2>/tmp/err
