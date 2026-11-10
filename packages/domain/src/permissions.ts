@@ -23,7 +23,7 @@ export const statements = {
   classRecord: ["read", "update"],
   assessment: ["read", "create", "update", "delete"],
   questionBank: ["read", "create", "update", "delete", "share"],
-  submission: ["read", "grade"],
+  submission: ["grade"],
   // A student's own classes and standing, and joining or leaving a class.
   enrollment: ["read", "create", "delete"],
   // A student's own attempts at a session, and their results.
@@ -56,7 +56,7 @@ const teaching = {
   classRecord: ["read", "update"],
   assessment: ["read", "create", "update", "delete"],
   questionBank: ["read", "create", "update", "delete", "share"],
-  submission: ["read", "grade"],
+  submission: ["grade"],
   session: ["create", "host", "read"],
   result: ["release"],
   asset: ["create", "read"],
