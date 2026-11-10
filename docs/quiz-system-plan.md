@@ -1,20 +1,20 @@
 # Quiz system plan
 
-Most of the quiz system already exists in the web app, but it runs on in-memory demo data (`apps/web/src/lib/data/mock.ts`). Live sessions need state that the teacher and every student share on a server, so quizzes move into the API (`apps/rpc`), and the new features are built there.
+The quiz system is built in the API (`apps/rpc`, PostgreSQL through Drizzle) and the web app (`apps/web`) calls it over typed Effect RPC. Live sessions keep state that the teacher and every student share on the server. This plan records the decisions behind it and what is still to build (section 12).
 
 ## 1. Current state
 
 | Area | Today | Gap |
 |---|---|---|
-| Quiz model | `Assessment` in `apps/web/src/lib/types.ts`, kept in memory | No database tables or API calls for quizzes; no separate "session" |
-| Question types | multiple choice, true/false, identification, fill in the blank, enumeration, numeric, essay, code, SQL | No matching type or cloze test; identification and fill in the blank are separate types |
-| Parts | Each question type prints as its own part (`PaperSettings.parts`) | The teacher can't set parts |
-| Randomizing | `studentOrder()` in `components/online-exam.tsx` uses `Math.random` | Order changes on reload; only multiple-choice choices are shuffled |
-| Rich text | KaTeX only | No markdown |
-| Anti-cheat | `IntegrityEvent { type, at }`, listeners in `exam-integrity.tsx`, one `blockCopyPaste` switch | No time away recorded, so no minutes; no live view for the teacher; copy, paste and right-click can't be set separately |
-| Live updates | None (the API only answers HTTP requests) | Needed for the teacher's live view and teacher-paced games |
-| Code | `code` and `sql` types; the runner is called from the web app (`data/code-runner.ts`) | The runner should be called from the API |
-| Images | None; questions and choices are text only (plus LaTeX) | No file storage, no image questions or choices, no drawing or photo answers |
+| Quiz model | Quizzes, parts, questions, sessions, attempts and answers are PostgreSQL tables (`apps/rpc/src/database/schemas/quiz.ts`) behind RPCs in `packages/contract`. A quiz is reusable content; a session is one run of it. | None |
+| Question types | multiple choice, true/false, blank (identification, inline and cloze), matching, enumeration, numeric, essay, code, SQL, categorization, re-ordering, hotspot and drawing (`packages/domain/src/question.ts`) | Subjects limit which types the editor offers; "Show all question types" lifts the limit |
+| Parts | The teacher creates, renames, reorders and deletes parts, each with instructions, and can shuffle a part or draw a pool from it | None |
+| Randomizing | The API shuffles with a seed saved on each attempt, so the order survives a reload and the teacher sees what the student saw | None |
+| Rich text | Markdown (sanitised, with LaTeX math) in prompts, choices, instructions, descriptions, essay answers and feedback | None |
+| Anti-cheat | Per-session switches in `IntegritySettings` (full screen, focus tracking, second screen, copy, paste, right-click, print, watermark, auto-submit, allowed clients); events, incidents and time away are recorded and shown in the teacher's live view | Camera and screen monitoring (section 9.7, phase 8) |
+| Live updates | Effect RPC streams over a WebSocket; the web server gets a short-lived ticket from `live.ticket` for the browser. Live events travel over Dragonfly pub/sub (`LiveBus`), so they reach viewers on any API instance; game rooms are held in the API's memory and their position is saved to `quiz_sessions` | None |
+| Code | `code` and `sql` types. The API calls the runner from `apps/rpc/src/platform/Runner.ts` and grades SQL itself; the runner (`apps/runner`) starts one throwaway Docker container per submission | None |
+| Images | Private S3-compatible bucket (Garage in development) with presigned uploads and signed URLs, used for question images, drawings and photo answers | None |
 
 ## 2. Main decisions
 
@@ -33,7 +33,7 @@ Most of the quiz system already exists in the web app, but it runs on in-memory 
    - **Uploads:** the browser uploads directly to S3 using a short-lived presigned POST issued by the API (`asset.createUpload`), so files don't pass through the web app or the API.
    - **Viewing:** images are shown through short-lived signed GET URLs, so question images can't be seen before the session opens and students' drawings stay private.
    - **Library and settings:** the API uses `@aws-sdk/client-s3` and `@aws-sdk/s3-presigned-post`, with the environment variables `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`.
-   - **Local development:** devenv adds a MinIO service.
+   - **Local development:** devenv starts Garage, an S3-compatible service.
 7. **Effect v4 everywhere, no Zod.** All validation (contract schemas, API input, web forms, environment variables) uses Effect v4 `Schema`. Zod is removed from the repo.
 
 ## 3. Workflow
