@@ -60,18 +60,33 @@ const limits = {
   maxStdout: 4 * 1024 * 1024,
 };
 
-// --- a small queue so only CONCURRENCY containers run at once ---
+// --- two small queues so only CONCURRENCY containers run at once ---
+// "sample" runs are a student pressing Run samples and waiting for the answer; "graded" submits are the API
+// grading in the background. Samples go first, so one student's Run never waits behind a whole class's submits, but
+// after SAMPLE_STREAK samples in a row the next free slot goes to a graded submit, so grading is never starved.
+const SAMPLE_STREAK = 4;
 let running = 0;
-/** @type {(() => void)[]} */
-const waiting = [];
-async function withSlot(/** @type {() => Promise<any>} */ job) {
-  if (running >= CONCURRENCY) await new Promise((resolve) => waiting.push(() => resolve(undefined)));
-  running++;
+let samplesInARow = 0;
+/** @type {{ sample: (() => void)[], graded: (() => void)[] }} */
+const waiting = { sample: [], graded: [] };
+const queued = () => waiting.sample.length + waiting.graded.length;
+/** The next waiter to get a free slot, or undefined when nobody waits. */
+function nextWaiting() {
+  const graded = samplesInARow >= SAMPLE_STREAK || waiting.sample.length === 0;
+  const next = graded ? waiting.graded.shift() : waiting.sample.shift();
+  if (next) samplesInARow = graded ? 0 : samplesInARow + 1;
+  return next;
+}
+async function withSlot(/** @type {"sample" | "graded"} */ priority, /** @type {() => Promise<any>} */ job) {
+  // A waiter is handed the slot of the job that just finished (running stays the same), so a newcomer can't slip in between.
+  if (running >= CONCURRENCY) await new Promise((resolve) => waiting[priority].push(() => resolve(undefined)));
+  else running++;
   try {
     return await job();
   } finally {
-    running--;
-    waiting.shift()?.();
+    const next = nextWaiting();
+    if (next) next();
+    else running--;
   }
 }
 
@@ -201,7 +216,7 @@ function parse(/** @type {string} */ stdout) {
   return { tests };
 }
 
-async function run(/** @type {{ language: string, code: string, tests: { id: string, input: string }[], database?: string }} */ job) {
+async function run(/** @type {{ language: string, code: string, tests: { id: string, input: string }[], database?: string, priority?: "sample" | "graded" }} */ job) {
   const workDir = await mkdtemp(path.join(tmpdir(), "examinus-run-"));
   try {
     await writeFile(path.join(workDir, sourceFile[/** @type {keyof typeof sourceFile} */ (job.language)]), job.code);
@@ -209,7 +224,7 @@ async function run(/** @type {{ language: string, code: string, tests: { id: str
     // The sandbox user (nobody) must be able to read it all.
     await chmod(workDir, 0o755);
 
-    const { out, killed } = await withSlot(() =>
+    const { out, killed } = await withSlot(job.priority === "sample" ? "sample" : "graded", () =>
       telemetry.traceContainer(() => runContainer(workDir, job.language, job.tests.map((t) => t.input), Boolean(job.database))),
     );
     const tooLong = "The run took too long and was stopped.";
@@ -244,6 +259,7 @@ function invalid(/** @type {any} */ job) {
   if (typeof job.code !== "string" || job.code.length > limits.maxCode) return "Code missing or too long.";
   if (job.database !== undefined && (typeof job.database !== "string" || job.database.length > limits.maxDatabase))
     return "Database setup must be a string under 256 KB.";
+  if (job.priority !== undefined && job.priority !== "sample" && job.priority !== "graded") return "Priority is sample or graded.";
   if (!Array.isArray(job.tests) || job.tests.length === 0 || job.tests.length > limits.maxTests) return "1–30 tests.";
   for (const t of job.tests)
     if (typeof t?.id !== "string" || typeof t?.input !== "string" || t.input.length > limits.maxInput)
@@ -279,7 +295,7 @@ async function removeLeftovers() {
 await removeLeftovers();
 
 const server = createServer(async (/** @type {import("node:http").IncomingMessage} */ req, /** @type {import("node:http").ServerResponse} */ res) => {
-  if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, image: IMAGE, running, waiting: waiting.length });
+  if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, image: IMAGE, running, waiting: queued(), waitingSamples: waiting.sample.length, waitingGraded: waiting.graded.length });
   if (req.method !== "POST" || req.url !== "/run") return send(res, 404, { error: "Not found" });
   if (!authorized(req.headers.authorization)) return send(res, 401, { error: "Unauthorized" });
 

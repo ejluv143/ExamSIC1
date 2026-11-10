@@ -137,7 +137,7 @@ export class Saving extends Context.Service<
         if (samples.length === 0) return yield* new Conflict({ message: "This question has no sample tests to run." });
 
         yield* limiter.hit(limits.codeRun, player.id).pipe(Effect.mapError((e) => new Conflict({ message: e.message })));
-        return (yield* runner.runTests(question, code, samples)) as CodeTestResult[] | null;
+        return (yield* runner.runTests(question, code, samples, "sample")) as CodeTestResult[] | null;
       });
 
       const submit = Effect.fn("Saving.submit")(function* (
