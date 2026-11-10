@@ -219,6 +219,16 @@ Win, Cmd+Tab, Cmd+H, PrintScreen) intercepted and reported as the existing event
 attempt is submitted, the session ends, or the teacher force-submits (student live stream).
 Exit: a student cannot leave the window without the event appearing in the live view; the shell releases on submit.
 
+**Status (PR 1 of 3, spec: `SPEC-desktop-lockdown.md`).** Built: the `lockdown-enter` / `lockdown-exit` signals with a
+5 s keep-alive and a 10 s watchdog (`apps/desktop/src-tauri/src/lockdown.rs`); while locked the window is full screen, always
+on top and cannot be resized, minimised, maximised or closed; closing asks the page for the exit-password dialog, or for
+"Leave exam" when there is no password (recorded as `kiosk_exited`); the clipboard is re-cleared when the window regains
+focus. Focus, tab and full-screen changes are reported by the web sensors running in the shell's window, not again by the
+shell. Not built yet: swallowing Alt+Tab / Win / PrintScreen on Windows (PR 2) and the macOS presentation options (PR 3).
+What each platform enforces: Windows and macOS can swallow system shortcuts (once PR 2 and 3 land); Linux X11 can grab some
+keys; Linux Wayland ignores always-on-top and cannot swallow shortcuts, so it only detects and reports. Tested on Linux
+(Wayland) only; Windows and macOS are untested on hardware.
+
 ### D3 – Environment checks (Rust)
 Run before the attempt and every 10 s during it: running processes against a blocklist (remote desktop, screen
 recorders, messaging, other browsers) → `blocked_process`; hypervisor bit, DMI vendor, known VM drivers →
