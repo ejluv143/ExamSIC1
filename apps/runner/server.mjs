@@ -4,7 +4,7 @@
 // so keep it on a private network and never expose it to students directly.
 import { spawn } from "node:child_process";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,6 +31,16 @@ const IMAGE = process.env.RUNNER_IMAGE ?? "examinus-sandbox:1";
 const concurrencySetting = (process.env.RUNNER_CONCURRENCY ?? "2").trim();
 const CONCURRENCY = /^\d+$/.test(concurrencySetting) ? Number(concurrencySetting) : 0;
 
+// Which runner this is. Containers and work folders carry it, so a runner that starts up (or restarts after a crash)
+// cleans up only after itself and leaves other runners on the same Docker daemon and temp directory alone. Kept
+// across restarts: set RUNNER_INSTANCE, or it is derived from PORT (two runners on one host need different ports).
+const INSTANCE = (process.env.RUNNER_INSTANCE?.trim() || `port-${PORT}`);
+const WORK_ROOT = path.join(tmpdir(), `examinus-runner-${INSTANCE}`);
+
+if (!/^[A-Za-z0-9_.-]{1,40}$/.test(INSTANCE)) {
+  console.error(`RUNNER_INSTANCE must be 1 to 40 letters, digits, "-", "_" or "." (got "${INSTANCE}"). See .env.example.`);
+  process.exit(1);
+}
 if (SECRET.length < 16) {
   console.error("Set RUNNER_SECRET (16+ characters) in apps/runner/.env. See .env.example.");
   process.exit(1);
@@ -126,6 +136,8 @@ function runContainer(
   const args = [
     // -i: the test inputs go in on stdin, so they're never in /work where students' code could read them (issue #19).
     "run", "--rm", "-i", "--name", name,
+    // Which runner started it: startup cleanup removes only its own (issue #72).
+    "--label", `examinus.runner=${INSTANCE}`,
     "--network", "none",
     "--memory", "512m", "--memory-swap", "512m",
     "--cpus", "1",
@@ -217,7 +229,11 @@ function parse(/** @type {string} */ stdout) {
 }
 
 async function run(/** @type {{ language: string, code: string, tests: { id: string, input: string }[], database?: string, priority?: "sample" | "graded" }} */ job) {
-  const workDir = await mkdtemp(path.join(tmpdir(), "examinus-run-"));
+  // One folder per runner instance, so another runner's cleanup never reaches these (issue #72). The sandbox user must
+  // be able to walk through it.
+  await mkdir(WORK_ROOT, { recursive: true, mode: 0o755 });
+  await chmod(WORK_ROOT, 0o755);
+  const workDir = await mkdtemp(path.join(WORK_ROOT, "run-"));
   try {
     await writeFile(path.join(workDir, sourceFile[/** @type {keyof typeof sourceFile} */ (job.language)]), job.code);
     if (job.database) await writeFile(path.join(workDir, "database.sql"), job.database);
@@ -278,18 +294,18 @@ const send = (/** @type {import("node:http").ServerResponse} */ res, /** @type {
   res.end(JSON.stringify(body));
 };
 
-// After a crash, containers and temp directories from the last run are left behind. This assumes one runner per
-// Docker daemon and temp directory.
+// After a crash, this runner's containers and work folders from the last run are left behind. Only this instance's
+// (its label, its folder): another runner on the same Docker daemon and temp directory keeps its running jobs.
 async function removeLeftovers() {
-  const { code, out } = await docker(["ps", "-a", "--filter", "name=examinus-run-", "--format", "{{.Names}}"]);
+  const { code, out } = await docker(["ps", "-a", "--filter", `label=examinus.runner=${INSTANCE}`, "--format", "{{.Names}}"]);
   const names = out.split("\n").filter((n) => n.startsWith("examinus-run-"));
   if (code !== 0) console.error("Couldn't list leftover containers: is Docker running?");
   else if (names.length) {
     await docker(["rm", "-f", ...names]);
     console.log(`Removed ${names.length} leftover container(s).`);
   }
-  const dirs = (await readdir(tmpdir())).filter((d) => d.startsWith("examinus-run-"));
-  await Promise.all(dirs.map((d) => rm(path.join(tmpdir(), d), { recursive: true, force: true })));
+  const dirs = await readdir(WORK_ROOT).catch(() => /** @type {string[]} */ ([]));
+  await Promise.all(dirs.map((d) => rm(path.join(WORK_ROOT, d), { recursive: true, force: true })));
   if (dirs.length) console.log(`Removed ${dirs.length} leftover temp director${dirs.length === 1 ? "y" : "ies"}.`);
 }
 await removeLeftovers();
@@ -328,7 +344,7 @@ const server = createServer(async (/** @type {import("node:http").IncomingMessag
     send(res, 500, { error: "The runner failed." });
   }
 });
-server.listen(PORT, "127.0.0.1", () => console.log(`Examinus runner on http://127.0.0.1:${PORT} (image ${IMAGE}, ${CONCURRENCY} at a time)`));
+server.listen(PORT, "127.0.0.1", () => console.log(`Examinus runner on http://127.0.0.1:${PORT} (instance ${INSTANCE}, image ${IMAGE}, ${CONCURRENCY} at a time)`));
 
 // Stop taking requests and flush pending telemetry before exiting.
 for (const signal of ["SIGTERM", "SIGINT"]) {
