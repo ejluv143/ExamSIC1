@@ -27,7 +27,7 @@ export const startSession = (sessionId: string) => command({ session: ["host"] }
 export const pauseSession = (sessionId: string) => command({ session: ["host"] }, (api) => api["session.pause"]({ sessionId }));
 export const resumeSession = (sessionId: string) => command({ session: ["host"] }, (api) => api["session.resume"]({ sessionId }));
 export const endSession = (sessionId: string) => command({ session: ["host"] }, (api) => api["session.end"]({ sessionId }));
-export const removeSession = (sessionId: string) => command({ session: ["host"] }, (api) => api["session.remove"]({ sessionId }));
+export const removeSession = (sessionId: string) => command({ session: ["create"] }, (api) => api["session.remove"]({ sessionId }));
 
 // Sets (null: clears) what one student of the roster gets in this session: more time, more attempts, exemptions.
 export const setAccommodations = (sessionId: string, studentId: string, accommodations: Accommodations | null) =>

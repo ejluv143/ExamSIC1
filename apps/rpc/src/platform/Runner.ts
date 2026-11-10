@@ -40,6 +40,8 @@ export class Runner extends Context.Service<
       question: CodeQuestion,
       code: string,
       tests?: readonly CodeTestCase[],
+      // "sample": a student pressing Run samples, who is waiting, so the runner serves it before graded submits.
+      priority?: "sample" | "graded",
     ) => Effect.Effect<CodeTestResult[] | null>;
   }
 >()("examinus/api/Runner") {
@@ -53,8 +55,8 @@ export class Runner extends Context.Service<
       // `outcome` is what the runner duration metric records: ok, failed (the program didn't compile or ran too
       // long), rejected (over the limits, or the runner turned the job down) or unreachable.
       type Call = { readonly reply: RunnerReply | null; readonly outcome: string };
-      const call = (question: CodeQuestion, code: string, tests: readonly CodeTestCase[]): Effect.Effect<Call> => {
-        const job = codeRunnerJob(question.language, code, tests, question.database);
+      const call = (question: CodeQuestion, code: string, tests: readonly CodeTestCase[], priority: "sample" | "graded"): Effect.Effect<Call> => {
+        const job = { ...codeRunnerJob(question.language, code, tests, question.database), priority };
         const details = { questionId: question.id, tests: tests.length, codeLength: code.length };
         // Over the runner's limits: it would only refuse it, so don't send it.
         const problem = codeRunnerProblem(job);
@@ -101,9 +103,9 @@ export class Runner extends Context.Service<
 
       return Runner.of({
         configured,
-        runTests: Effect.fn("Runner.runTests")(function* (question, code, tests = question.tests) {
+        runTests: Effect.fn("Runner.runTests")(function* (question, code, tests = question.tests, priority = "graded") {
           if (!configured) return null;
-          const { reply } = yield* call(question, code, tests);
+          const { reply } = yield* call(question, code, tests, priority);
           if (!reply) return null;
           // The question's own tables are broken: not the student's fault, so the teacher grades it.
           if (reply.compileError?.startsWith("The question's tables")) return null;

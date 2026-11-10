@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { Result, Schema, SchemaGetter } from "effect";
 import { subjectAreaNames } from "@examinus/domain/roles";
 import { attachmentKinds, classColorNames, resourceKinds, type PostFields } from "@examinus/domain/classes";
-import { parseForm } from "@/lib/validate";
+import { parseForm, required } from "@/lib/validate";
 import {
   archiveClass,
   createClass,
@@ -33,10 +33,6 @@ import { applyCookies } from "@/lib/api/client";
 export type ClassFormState = { error: string } | undefined;
 
 // Form fields with messages for people; the API checks the same rules again.
-const required =
-  (message: string) =>
-  <S extends Schema.Top>(self: S) =>
-    self.pipe(Schema.annotateKey({ messageMissingKey: message }));
 const text = (max: number, label: string) =>
   Schema.Trim.check(Schema.isMaxLength(max, { message: `Use at most ${max} characters for the ${label}.` }));
 const requiredText = (max: number, label: string, missing: string) =>

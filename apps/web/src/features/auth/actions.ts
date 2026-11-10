@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { Result, Schema } from "effect";
 import { homeFor, roleNames, roleOf, type Role } from "@examinus/domain/roles";
 import { applyCookies, callApi, forwardedHeaders } from "@/lib/api/client";
-import { emailPattern, parseForm } from "@/lib/validate";
+import { emailPattern, parseForm, required } from "@/lib/validate";
 import { passwordProblem } from "@examinus/domain/password";
 import { joinAsGuest, getMyAvatar, saveAvatar } from "@/features/auth/data";
 import { isOAuthResume } from "@/features/auth/oauth";
@@ -99,10 +99,6 @@ export type RegisterValues = { name: string; email: string };
 export type RegisterState = { error: string; values: RegisterValues } | undefined;
 
 // Form fields with messages for people; the API checks the same rules again.
-const required =
-  (message: string) =>
-  <S extends Schema.Top>(self: S) =>
-    self.pipe(Schema.annotateKey({ messageMissingKey: message }));
 const profileFields = {
   role: Schema.Literals(["student", "teacher"])
     .annotate({ message: "Choose whether you're a student or a teacher." })
