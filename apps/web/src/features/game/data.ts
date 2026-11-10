@@ -37,7 +37,7 @@ export async function getMyGameStandings(sessionId: string) {
 // --- Teachers (their live controls are in commands.ts) ---
 
 export async function getGameStandings(sessionId: string) {
-  await requirePermission({ session: ["read"] });
+  await requirePermission({ session: ["host"] });
   return readOrNull((api) => api["game.standings"]({ sessionId }));
 }
 

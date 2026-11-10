@@ -54,7 +54,8 @@ export async function gradeAnswer(
   feedback: string | null,
   reason?: string,
 ) {
-  await requirePermission({ session: ["host"] });
+  // The same permission session.grade checks in the API.
+  await requirePermission({ submission: ["grade"] });
   return write((api) =>
     api["session.grade"]({ attemptId, questionId, manualScore, feedback, ...(reason === undefined ? {} : { reason }) }),
   );
