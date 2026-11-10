@@ -8,6 +8,7 @@ import { resultsVisible } from "@examinus/domain/release";
 import { latestSubmitted, finalScore } from "@examinus/domain/results";
 import { questionScore } from "@examinus/domain/scoring";
 import { Context, Effect, Layer } from "effect";
+import { groupBy } from "../../platform/group.ts";
 import { type Actor } from "../auth/Session.ts";
 import { paperOf, statusAfterScoring } from "../attempt/paper.ts";
 import { toIncident } from "../live/rules.ts";
@@ -57,12 +58,15 @@ export class SessionReports extends Context.Service<
       const classScores = Effect.fn("SessionReports.classScores")(function* (actor: Actor, classId: string) {
         const now = Date.now();
         const { rows, parts, done, answerRows } = yield* repo.classScoreData(actor, classId);
+        // Grouped once, so each student's score reads its own answers instead of scanning every answer in the class.
+        const doneOf = groupBy(done, (x) => x.attempt.sessionId);
+        const answersOf = groupBy(answerRows, (a) => a.attemptId);
         return rows.map(({ session, quiz }): ClassSessionScores => {
           const paperParts = parts.get(quiz.id) ?? [];
           const { session: s, record } = toRecordSession(session, quiz, paperParts, now);
           // Each student's latest submitted attempt.
           const latest = latestSubmitted(
-            done.filter((x) => x.attempt.sessionId === session.id),
+            doneOf.get(session.id) ?? [],
             (x) => x.rosterId,
             (x) => x.attempt,
           );
@@ -71,7 +75,7 @@ export class SessionReports extends Context.Service<
             status: s.status,
             endedAt: s.endedAt,
             scores: [...latest].map(([studentId, { attempt }]) => {
-              const score = paperOf({ quiz, parts: paperParts }, attempt.seed).score(answerRows.filter((a) => a.attemptId === attempt.id));
+              const score = paperOf({ quiz, parts: paperParts }, attempt.seed).score(answersOf.get(attempt.id) ?? []);
               return {
                 studentId,
                 score: finalScore(score),
