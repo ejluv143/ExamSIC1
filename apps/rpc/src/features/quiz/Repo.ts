@@ -1,7 +1,8 @@
 // The quiz tables: parts and questions of quizzes, read as the contract's quiz detail.
 import type { QuizDetail, QuizDraft, QuizPartWithQuestions } from "@examinus/contract/quiz";
 import type { Question } from "@examinus/domain/question";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+import type { PgTable } from "drizzle-orm/pg-core";
 import { Context, Effect, Layer } from "effect";
 import { Database, type Db, type Drizzle } from "../../platform/Database.ts";
 import { ownedQuizzes } from "../../platform/organization-scope.ts";
@@ -15,6 +16,7 @@ import {
   type QuizItem,
   type QuizSessionItem,
 } from "../../database/schemas/index.ts";
+import { groupBy } from "../../platform/group.ts";
 import { newId } from "../../platform/ids.ts";
 import type { Actor } from "../auth/Session.ts";
 import { toPart, toQuestion, toQuiz } from "./mappers.ts";
@@ -49,6 +51,34 @@ export async function loadParts(d: Db, quizIds: readonly string[]): Promise<Map<
   return byQuiz;
 }
 
+// How many questions and points each quiz's paper has (the rules of `quizTotals`), added up by the database so no
+// question body is read.
+export async function loadTotals(d: Db, quizIds: readonly string[]): Promise<Map<string, { questionCount: number; totalPoints: number }>> {
+  const totals = new Map<string, { questionCount: number; totalPoints: number }>();
+  if (quizIds.length === 0) return totals;
+  const rows = await d
+    .select({
+      quizId: quizParts.quizId,
+      poolSize: quizParts.poolSize,
+      count: sql<number>`count(${questions.id})::int`,
+      sum: sql<number>`coalesce(sum(${questions.points}), 0)::float8`,
+      first: sql<number | null>`(array_agg(${questions.points} order by ${questions.position}))[1]`,
+    })
+    .from(quizParts)
+    .leftJoin(questions, eq(questions.partId, quizParts.id))
+    .where(inArray(quizParts.quizId, [...quizIds]))
+    .groupBy(quizParts.id);
+  for (const r of rows) {
+    const drawn = r.poolSize === null ? r.count : Math.min(r.poolSize, r.count);
+    const total = totals.get(r.quizId) ?? { questionCount: 0, totalPoints: 0 };
+    total.questionCount += drawn;
+    // A pool's questions all have the same points; a plain part adds them up.
+    total.totalPoints += r.poolSize === null ? r.sum : drawn * (r.first ?? 0);
+    totals.set(r.quizId, total);
+  }
+  return totals;
+}
+
 export async function loadQuizDetail(d: Db, quiz: QuizItem): Promise<QuizDetail> {
   const parts = (await loadParts(d, [quiz.id])).get(quiz.id) ?? [];
   return { quiz: toQuiz(quiz), parts };
@@ -59,6 +89,21 @@ const questionRow = (q: Question, id: string, partId: string, position: number):
   const { id: _id, prompt, points, topic, gamePoints, partialCredit, ...body } = q;
   return { id, partId, position, type: q.type, prompt, points, gamePoints, partialCredit, topic: topic ?? null, body: body as NewQuestion["body"] };
 };
+
+// Rows per insert statement, so one never nears Postgres's limit of 65535 parameters (a question row has 9).
+const BATCH = 1000;
+
+// Inserts rows in batches, each statement updating the row that already has the id (`excluded` is the row offered).
+async function upsertAll<T extends PgTable & { id: { name: string } }>(d: Db, table: T, rows: readonly T["$inferInsert"][]) {
+  if (rows.length === 0) return;
+  const set = Object.fromEntries(
+    Object.entries(getTableColumns(table))
+      .filter(([, column]) => column.name !== "id")
+      .map(([key, column]) => [key, sql.raw(`excluded."${column.name}"`)]),
+  );
+  for (let i = 0; i < rows.length; i += BATCH)
+    await d.insert(table).values(rows.slice(i, i + BATCH)).onConflictDoUpdate({ target: table.id as never, set: set as never });
+}
 
 // Inserts or updates a quiz with its parts and questions in one transaction. Ids the quiz already has
 // are kept; anything else gets a fresh id (a client's own ids may collide with other quizzes' rows).
@@ -98,28 +143,29 @@ const write = (d: Drizzle, actor: Actor, draft: QuizDraft, existing: string | nu
 
     const keptParts = new Set<string>();
     const keptQuestions = new Set<string>();
+    const partRows: (typeof quizParts.$inferInsert)[] = [];
+    const questionRows: NewQuestion[] = [];
     for (const [position, part] of draft.parts.entries()) {
       const partId = oldParts.has(part.id) && !keptParts.has(part.id) ? part.id : newId("part");
       keptParts.add(partId);
-      const values = {
+      partRows.push({
+        id: partId,
         quizId,
         position,
         title: part.title,
         instructions: part.instructions,
         shuffleQuestions: part.shuffleQuestions,
         poolSize: part.poolSize,
-      };
-      await tx
-        .insert(quizParts)
-        .values({ id: partId, ...values })
-        .onConflictDoUpdate({ target: quizParts.id, set: values });
+      });
       for (const [qPosition, q] of part.questions.entries()) {
         const id = oldQuestions.has(q.id) && !keptQuestions.has(q.id) ? q.id : newId("q");
         keptQuestions.add(id);
-        const row = questionRow(q, id, partId, qPosition);
-        await tx.insert(questions).values(row).onConflictDoUpdate({ target: questions.id, set: row });
+        questionRows.push(questionRow(q, id, partId, qPosition));
       }
     }
+    // Parts before the questions that point at them; a few statements however big the quiz is.
+    await upsertAll(tx, quizParts, partRows);
+    await upsertAll(tx, questions, questionRows);
     // Questions first, so one moved into a kept part isn't deleted with its old part.
     const droppedQuestions = [...oldQuestions].filter((id) => !keptQuestions.has(id));
     if (droppedQuestions.length) await tx.delete(questions).where(inArray(questions.id, droppedQuestions));
@@ -138,10 +184,10 @@ export class QuizRepo extends Context.Service<
     readonly detail: (quiz: QuizItem) => Effect.Effect<QuizDetail>;
     // The quiz, when the actor owns it in their organization.
     readonly findOwned: (quizId: string, actor: Actor) => Effect.Effect<QuizItem | null>;
-    // The user's quizzes in the organization, newest edit first, each with its parts and its sessions (newest first).
+    // The user's quizzes in the organization, newest edit first, each with its question and point totals and its sessions (newest first).
     readonly listOwned: (
       actor: Actor,
-    ) => Effect.Effect<{ quiz: QuizItem; parts: QuizPartWithQuestions[]; sessions: QuizSessionItem[] }[]>;
+    ) => Effect.Effect<{ quiz: QuizItem; totals: { questionCount: number; totalPoints: number }; sessions: QuizSessionItem[] }[]>;
     // Whether any student has started the quiz, in any of its sessions.
     readonly hasAttempts: (quizId: string) => Effect.Effect<boolean>;
     // Inserts (existing = null) or updates a quiz with its parts and questions in one transaction; the quiz's id.
@@ -184,14 +230,15 @@ export class QuizRepo extends Context.Service<
               .where(ownedQuizzes(actor))
               .orderBy(desc(quizzes.updatedAt));
             const ids = rows.map((q) => q.id);
-            const parts = await loadParts(d, ids);
+            const totals = await loadTotals(d, ids);
             const sessions = ids.length
               ? await d.select().from(quizSessions).where(inArray(quizSessions.quizId, ids)).orderBy(desc(quizSessions.createdAt))
               : [];
+            const sessionsOf = groupBy(sessions, (s) => s.quizId);
             return rows.map((quiz) => ({
               quiz,
-              parts: parts.get(quiz.id) ?? [],
-              sessions: sessions.filter((s) => s.quizId === quiz.id),
+              totals: totals.get(quiz.id) ?? { questionCount: 0, totalPoints: 0 },
+              sessions: sessionsOf.get(quiz.id) ?? [],
             }));
           });
         }),
