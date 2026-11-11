@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 import { ClipboardCheck, ClipboardList, Shapes } from "lucide-react";
@@ -19,19 +20,32 @@ const cardClass = "rounded-2xl border border-border bg-surface p-5 shadow-sm";
 const kindLabel = { assignment: "New assignment", activity: "New activity", announcement: "Announcement" } as const;
 
 // A post on the stream: an announcement (who wrote it and when), or an assignment or activity (what it is, when it
-// is due and what it is worth, with a link to the students' work).
+// is due and what it is worth, with a link to the students' work). A teacher gets `update`/`remove` to manage any
+// post; a student only gets `remove` for their own announcement (bound by the caller, or omitted for a teacher's).
+// `workHref` and `workLabel` point the "View student work" link at the right place for who's looking: a teacher's
+// gradebook, or the student's own turn-in page.
 export function AnnouncementPost({
   post,
   classId,
   classTitle,
   update,
   remove,
+  workHref,
+  workLabel = "View student work",
+  authorBadge = "Teacher",
+  footer,
 }: {
   post: Announcement;
   classId: string;
   classTitle: string;
-  update: Post;
-  remove: () => Promise<ClassFormState>;
+  update?: Post;
+  remove?: () => Promise<ClassFormState>;
+  workHref?: string;
+  workLabel?: string;
+  // What the author's badge says next to their name on an announcement; null hides it.
+  authorBadge?: string | null;
+  // Extra content under the work link, e.g. a turned-in status badge.
+  footer?: ReactNode;
 }) {
   const isWork = post.kind !== "announcement";
   const due = post.dueAt ? whenLabel(post.dueAt) : null;
@@ -67,26 +81,29 @@ export function AnnouncementPost({
             <>
               <p className="flex flex-wrap items-center gap-2">
                 <span className="font-bold">{author}</span>
-                <Badge tone="success">Teacher</Badge>
+                {authorBadge && <Badge tone="success">{authorBadge}</Badge>}
               </p>
               <p className="text-sm text-muted">{formatDateTime(post.createdAt)}</p>
             </>
           )}
         </div>
-        <div className="flex shrink-0 items-center">
-          <EditAnnouncementButton announcement={post} post={update} classTitle={classTitle} />
-          <DeleteAnnouncementButton remove={remove} />
-        </div>
+        {(update || remove) && (
+          <div className="flex shrink-0 items-center">
+            {update && <EditAnnouncementButton announcement={post} post={update} classTitle={classTitle} />}
+            {remove && <DeleteAnnouncementButton remove={remove} />}
+          </div>
+        )}
       </div>
 
       {post.body && <Markdown className="mt-4 text-[0.95rem]">{post.body}</Markdown>}
       <PostDetails post={post} />
       <AttachmentList attachments={post.attachments} />
       {isWork && (
-        <div className="mt-4">
-          <ButtonLink href={`/teacher/classes/${classId}/work/${post.id}`} variant="secondary">
-            View student work
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <ButtonLink href={workHref ?? `/teacher/classes/${classId}/work/${post.id}`} variant="secondary">
+            {workLabel}
           </ButtonLink>
+          {footer}
         </div>
       )}
     </article>
@@ -94,11 +111,25 @@ export function AnnouncementPost({
 }
 
 // A quiz or exam in the stream: when it is live (or its lobby is open) it says so, stands out and opens the live
-// view; before that it says when it starts.
-export function SessionPost({ item }: { item: { session: SessionListItem["session"]; quizTitle: string } }) {
+// view; before that it says when it starts. `href` and `cta` point it at the teacher's live-view/grading routes by
+// default; a student passes their own (join the lobby, take the exam, see their result) and their own `ended`
+// footer (a score, not "review answers").
+export function SessionPost({
+  item,
+  href: hrefOverride,
+  cta,
+  ended,
+}: {
+  item: { session: SessionListItem["session"]; quizTitle: string };
+  href?: string;
+  // What the live/upcoming link under the heading says; null hides it.
+  cta?: string | null;
+  // Replaces the teacher's "review answers" footer once the session has ended; null hides the footer entirely.
+  ended?: ReactNode | null;
+}) {
   const { session, quizTitle } = item;
   const group = sessionGroupOf(session);
-  const href = `/teacher/assessments/${session.quizId}/sessions/${session.id}`;
+  const href = hrefOverride ?? `/teacher/assessments/${session.quizId}/sessions/${session.id}`;
   const heading =
     group === "live"
       ? session.status === "lobby"
@@ -134,20 +165,23 @@ export function SessionPost({ item }: { item: { session: SessionListItem["sessio
           <ModeBadge mode={session.mode} />
           {group === "live" ? <SessionStatusPill session={session} /> : <StatusBadge status={session.status} />}
         </div>
-        {group === "live" && (
+        {group === "live" && cta !== null && (
           <p className="mt-3 ml-14 text-sm font-semibold text-primary">
-            {session.status === "lobby" ? "Open the lobby" : "Open the live view"} →
+            {cta ?? (session.status === "lobby" ? "Open the lobby" : "Open the live view")} →
           </p>
         )}
       </Link>
-      {session.status === "ended" && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3">
-          <p className="text-sm text-muted">Finished. Go through each student&apos;s answers and score them.</p>
-          <ButtonLink href={`/teacher/grading/${session.id}`} variant="secondary">
-            <ClipboardCheck className="size-4" aria-hidden /> Review answers
-          </ButtonLink>
-        </div>
-      )}
+      {session.status === "ended" &&
+        (ended !== undefined ? (
+          ended && <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3">{ended}</div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3">
+            <p className="text-sm text-muted">Finished. Go through each student&apos;s answers and score them.</p>
+            <ButtonLink href={`/teacher/grading/${session.id}`} variant="secondary">
+              <ClipboardCheck className="size-4" aria-hidden /> Review answers
+            </ButtonLink>
+          </div>
+        ))}
     </article>
   );
 }

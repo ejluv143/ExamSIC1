@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { Loader2 } from "lucide-react";
 import { GoogleButton, OrDivider } from "@/features/auth/components/google-button";
@@ -30,6 +31,15 @@ export function RegisterForm({
   const [role, setRole] = useState<"student" | "teacher">(initialRole);
   // Kept across a failed submit, like the passwords.
   const [agreed, setAgreed] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Keeps ?role= in sync with the tab, so the URL matches what's about to be submitted (e.g. on refresh or copy/share).
+  function chooseRole(r: "student" | "teacher") {
+    setRole(r);
+    const next = new URLSearchParams(searchParams);
+    next.set("role", r);
+    router.replace(`?${next}`, { scroll: false });
+  }
 
   const values = state && "values" in state ? state.values : undefined;
   return (
@@ -43,7 +53,7 @@ export function RegisterForm({
               role === r ? "bg-surface shadow-sm" : "text-muted hover:text-foreground",
             )}
           >
-            <input type="radio" name="role" value={r} checked={role === r} onChange={() => setRole(r)} className="sr-only" />
+            <input type="radio" name="role" value={r} checked={role === r} onChange={() => chooseRole(r)} className="sr-only" />
             {r}
           </label>
         ))}

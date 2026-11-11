@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { Announcement, ClassInfo, PostFields, RosterStudent, SexSchema } from "@examinus/domain/classes";
+import { Announcement, ClassInfo, ClassResource, PostFields, RosterStudent, SexSchema } from "@examinus/domain/classes";
 import { Conflict, Forbidden, NotFound, TooManyRequests } from "./errors.ts";
 import { AuthMiddleware } from "./middleware.ts";
 import { ClassId } from "./shared.ts";
@@ -50,6 +50,8 @@ export class EnrollmentRpcs extends RpcGroup.make(
     error: Schema.Union([Forbidden, NotFound]),
   }),
   Rpc.make("announcements", { payload: ClassId, success: Schema.Array(Announcement), error: Schema.Union([Forbidden, NotFound]) }),
+  // The Resources shelf of a class the student is in: read-only (only the teacher adds or removes).
+  Rpc.make("resources", { payload: ClassId, success: Schema.Array(ClassResource), error: Schema.Union([Forbidden, NotFound]) }),
 )
   .prefix("enrollment.")
   .middleware(AuthMiddleware) {}

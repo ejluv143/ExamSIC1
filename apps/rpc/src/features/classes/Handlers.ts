@@ -153,6 +153,11 @@ export const EnrollmentHandlers = EnrollmentRpcs.toLayer(
         const me = yield* requireActor({ enrollment: ["read"] });
         return (yield* enrollment.announcements(me.actor, classId)).map(toAnnouncement);
       }),
+
+      "enrollment.resources": Effect.fn("enrollment.resources")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return (yield* enrollment.resources(me.actor, classId)).map(toResource);
+      }),
     });
   }),
 );

@@ -7,7 +7,7 @@ import { type SessionUser } from "@examinus/domain/user";
 import { Context, Effect, Layer } from "effect";
 import type { Headers as EffectHeaders } from "effect/http";
 import { newId } from "../../platform/ids.ts";
-import type { AnnouncementItem, ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, ResourceItem, StudentItem } from "../../database/schemas/index.ts";
 import { limits, RateLimiter } from "../../platform/RateLimiter.ts";
 import { BetterAuth, webHeaders } from "../auth/BetterAuth.ts";
 import { type Actor } from "../auth/Session.ts";
@@ -51,6 +51,8 @@ export class EnrollmentService extends Context.Service<
       actor: Actor,
       classId: string,
     ) => Effect.Effect<{ teacher: string | null; classmates: { firstName: string; lastName: string }[] }, NotFound>;
+    // The Resources shelf of a class the student belongs to.
+    readonly resources: (actor: Actor, classId: string) => Effect.Effect<ResourceItem[], NotFound>;
   }
 >()("examinus/api/EnrollmentService") {
   static readonly layer = Layer.effect(
@@ -185,6 +187,12 @@ export class EnrollmentService extends Context.Service<
           const member = yield* repo.membership(actor.id, classId);
           if (!member) return yield* new NotFound({ message: "You're not in that class." });
           return yield* repo.people(classId);
+        }),
+
+        resources: Effect.fn("EnrollmentService.resources")(function* (actor, classId) {
+          const member = yield* repo.membership(actor.id, classId);
+          if (!member) return yield* new NotFound({ message: "You're not in that class." });
+          return yield* repo.resources(classId);
         }),
       });
     }),

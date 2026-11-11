@@ -173,6 +173,13 @@ export async function getMyPeople(classId: string) {
   return Result.isSuccess(result) ? result.success : { teachers: [], classmates: [] };
 }
 
+// The class's Resources shelf, oldest first: read-only for a student.
+export async function getMyResources(classId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["enrollment.resources"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
 export async function isFirstJoin() {
   const { student } = await me({ enrollment: ["read"] });
   return student === null || !student.studentNumber || !student.sex;

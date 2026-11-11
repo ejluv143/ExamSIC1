@@ -246,8 +246,17 @@ function ResourceBody({ resource, note }: { resource: ClassResource; note?: stri
   );
 }
 
-// "Class Resources" on the stream's left: the links the teacher keeps for the class, with add and remove.
-export function ResourcesCard({ classId, resources }: { classId: string; resources: readonly ClassResource[] }) {
+// "Class Resources" on the stream's left: the links the teacher keeps for the class, with add and remove. A
+// student sees the same shelf read-only: no add button, no remove control.
+export function ResourcesCard({
+  classId,
+  resources,
+  canManage = true,
+}: {
+  classId: string;
+  resources: readonly ClassResource[];
+  canManage?: boolean;
+}) {
   const [adding, setAdding] = useState(false);
   return (
     <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
@@ -255,19 +264,21 @@ export function ResourcesCard({ classId, resources }: { classId: string; resourc
         <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
           <BookMarked className="size-5 text-primary" aria-hidden /> Class Resources
         </h2>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          aria-label="Add a resource"
-          title="Add a resource"
-          className="inline-flex size-8 items-center justify-center rounded-lg text-primary hover:bg-primary-soft focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          <Plus className="size-5" aria-hidden />
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            aria-label="Add a resource"
+            title="Add a resource"
+            className="inline-flex size-8 items-center justify-center rounded-lg text-primary hover:bg-primary-soft focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <Plus className="size-5" aria-hidden />
+          </button>
+        )}
       </div>
 
       {resources.length === 0 ? (
-        <p className="text-sm text-muted">Add the textbook, syllabus or any link students need.</p>
+        <p className="text-sm text-muted">{canManage ? "Add the textbook, syllabus or any link students need." : "Nothing here yet."}</p>
       ) : (
         <ul className="space-y-1">
           {resources.map((r) => (
@@ -284,13 +295,13 @@ export function ResourcesCard({ classId, resources }: { classId: string; resourc
                   <ResourceBody resource={r} />
                 </a>
               )}
-              <DeleteResource classId={classId} resource={r} />
+              {canManage && <DeleteResource classId={classId} resource={r} />}
             </li>
           ))}
         </ul>
       )}
 
-      <AddResource classId={classId} open={adding} onClose={() => setAdding(false)} />
+      {canManage && <AddResource classId={classId} open={adding} onClose={() => setAdding(false)} />}
     </section>
   );
 }

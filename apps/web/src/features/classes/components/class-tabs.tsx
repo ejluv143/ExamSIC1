@@ -11,11 +11,12 @@ export type ClassTab = (typeof classTabs)[number]["id"];
 
 const base = "inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold whitespace-nowrap";
 
-// The pill bar under the banner. Grades is its own page (the class record), so it links away from the tabs.
-export function ClassTabs({ active, base: href }: { active: ClassTab; base: string }) {
+// The pill bar under the banner. For a teacher, Grades is its own page (the class record) outside the tab's
+// `?tab=` query; a student's Grades is a tab like the others, so `gradesHref` lets them override it.
+export function ClassTabs({ active, base: href, gradesHref }: { active: ClassTab | "grades"; base: string; gradesHref?: string }) {
   const tabs: { id: string; label: string; icon: LucideIcon; to: string }[] = [
     ...classTabs.map((t) => ({ ...t, to: t.id === "stream" ? href : `${href}?tab=${t.id}` })),
-    { id: "grades", label: "Grades", icon: BarChart3, to: `${href}/record` },
+    { id: "grades", label: "Grades", icon: BarChart3, to: gradesHref ?? `${href}/record` },
   ];
   return (
     <nav

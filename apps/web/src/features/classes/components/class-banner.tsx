@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import Link from "next/link";
 import clsx from "clsx";
-import { CalendarCheck, Clock, DoorOpen, Pencil, Printer, Sheet, Users, Video } from "lucide-react";
+import { CalendarCheck, Clock, DoorOpen, ExternalLink, Pencil, Printer, Sheet, Users, Video } from "lucide-react";
 import { classColors } from "@examinus/domain/classes";
 import type { ClassFormState } from "../actions";
 import type { Class } from "../types";
@@ -13,7 +13,9 @@ const tool =
   "inline-flex items-center gap-2 rounded-xl bg-white/15 px-3 py-2 text-sm font-medium hover:bg-white/25 focus-visible:outline-2 focus-visible:outline-white";
 
 // The top of a class: term, room and schedule chips, the title, the class code and head count, then the meeting
-// link and the teacher's tools. It takes the class's colour or header picture.
+// link and the teacher's tools. It takes the class's colour or header picture. `newCode` and `customize` are the
+// teacher's management tools (regenerate the code, edit, customize appearance); a student's view omits both and
+// sees a read-only class code and the Classroom link instead.
 export function ClassBanner({
   cls,
   base,
@@ -26,8 +28,8 @@ export function ClassBanner({
   base: string;
   enrolled: number;
   headerUrl: string | null;
-  newCode: () => Promise<ClassFormState>;
-  customize: ComponentProps<typeof CustomizeAppearance>["save"];
+  newCode?: () => Promise<ClassFormState>;
+  customize?: ComponentProps<typeof CustomizeAppearance>["save"];
 }) {
   return (
     <section
@@ -69,7 +71,16 @@ export function ClassBanner({
 
         <div className="mt-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            {cls.joinCode ? <ClassCodeChip code={cls.joinCode} newCode={newCode} /> : null}
+            {cls.joinCode ? (
+              newCode ? (
+                <ClassCodeChip code={cls.joinCode} newCode={newCode} />
+              ) : (
+                <span className="inline-flex items-center gap-2 rounded-xl bg-black/20 py-1.5 px-3 backdrop-blur-sm">
+                  <span className="text-xs opacity-80">Class code</span>
+                  <span className="font-mono text-sm font-semibold tracking-[0.15em]">{cls.joinCode}</span>
+                </span>
+              )
+            ) : null}
             <span className="inline-flex items-center gap-1.5 text-sm opacity-90">
               <Users className="size-4" aria-hidden /> {enrolled} enrolled
             </span>
@@ -86,26 +97,36 @@ export function ClassBanner({
                 <Video className="size-4" aria-hidden /> Join online room
               </a>
             )}
-            <Link href={`${base}/attendance`} className={tool}>
-              <CalendarCheck className="size-4" aria-hidden /> <span className="max-sm:sr-only">Attendance</span>
-            </Link>
-            <Link href={`${base}/record`} className={tool}>
-              <Sheet className="size-4" aria-hidden /> <span className="max-sm:sr-only">Class record</span>
-            </Link>
-            <Link href={`${base}/grade-sheet`} className={tool}>
-              <Printer className="size-4" aria-hidden /> <span className="max-sm:sr-only">Grade sheet</span>
-            </Link>
-            <Link href={`${base}/edit`} className={tool}>
-              <Pencil className="size-4" aria-hidden /> <span className="max-sm:sr-only">Edit</span>
-            </Link>
-            <CustomizeAppearance
-              title={`${cls.courseCode} · ${cls.title}`}
-              section={cls.section}
-              color={cls.color ?? null}
-              headerImage={cls.headerImage ?? null}
-              headerUrl={headerUrl}
-              save={customize}
-            />
+            {customize ? (
+              <>
+                <Link href={`${base}/attendance`} className={tool}>
+                  <CalendarCheck className="size-4" aria-hidden /> <span className="max-sm:sr-only">Attendance</span>
+                </Link>
+                <Link href={`${base}/record`} className={tool}>
+                  <Sheet className="size-4" aria-hidden /> <span className="max-sm:sr-only">Class record</span>
+                </Link>
+                <Link href={`${base}/grade-sheet`} className={tool}>
+                  <Printer className="size-4" aria-hidden /> <span className="max-sm:sr-only">Grade sheet</span>
+                </Link>
+                <Link href={`${base}/edit`} className={tool}>
+                  <Pencil className="size-4" aria-hidden /> <span className="max-sm:sr-only">Edit</span>
+                </Link>
+                <CustomizeAppearance
+                  title={`${cls.courseCode} · ${cls.title}`}
+                  section={cls.section}
+                  color={cls.color ?? null}
+                  headerImage={cls.headerImage ?? null}
+                  headerUrl={headerUrl}
+                  save={customize}
+                />
+              </>
+            ) : (
+              cls.classroom && (
+                <a href={cls.classroom.link} target="_blank" rel="noreferrer" className={tool}>
+                  Open in Classroom <ExternalLink className="size-3.5" aria-hidden />
+                </a>
+              )
+            )}
           </div>
         </div>
       </div>
