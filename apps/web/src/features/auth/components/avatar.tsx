@@ -85,7 +85,7 @@ export function AvatarEditor({ initial, onSaved, onCancel }: { initial: Avatar; 
         </div>
       </div>
 
-      <fieldset>
+      <fieldset className="min-w-0">
         <legend className="mb-1.5 text-sm font-medium">Style</legend>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {avatarStyles.map((name) => (
@@ -171,7 +171,7 @@ export function AvatarEditor({ initial, onSaved, onCancel }: { initial: Avatar; 
           ) : (
             <div role="tabpanel" aria-label="Colours" className="space-y-3">
               {choices.colors.map((group) => (
-                <fieldset key={group.name}>
+                <fieldset key={group.name} className="min-w-0">
                   <legend className="mb-1 text-sm">{group.label}</legend>
                   <div className="flex flex-wrap gap-1.5">
                     <button

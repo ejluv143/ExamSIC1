@@ -121,9 +121,9 @@ describe("a teacher in two organizations", () => {
   });
 
   test("a member of one organization cannot switch to another", async () => {
-    // Its own alias: `bank.integration.test.ts` signs "student" in as Andrea, who the test above made a member of both.
-    await signIn("sic-only", "student@sic.edu.ph", teacherPassword);
-    expect(await refused("sic-only", "org.setActive", { organizationId: otherOrganizationId })).toMatch(/^NotFound/);
+    // Its own session key: "student" is Ann in bank.integration.test.ts, and Ann joined the second school above.
+    await signIn("testStudent", "student@sic.edu.ph", teacherPassword);
+    expect(await refused("testStudent", "org.setActive", { organizationId: otherOrganizationId })).toMatch(/^NotFound/);
   });
 });
 

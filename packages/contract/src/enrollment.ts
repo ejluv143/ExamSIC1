@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { ClassInfo, RosterStudent, SexSchema } from "@examinus/domain/classes";
+import { Announcement, ClassInfo, PostFields, RosterStudent, SexSchema } from "@examinus/domain/classes";
 import { Conflict, Forbidden, NotFound, TooManyRequests } from "./errors.ts";
 import { AuthMiddleware } from "./middleware.ts";
 import { ClassId } from "./shared.ts";
@@ -23,6 +23,33 @@ export class EnrollmentRpcs extends RpcGroup.make(
     error: Schema.Union([Forbidden, NotFound, Conflict, TooManyRequests]),
   }),
   Rpc.make("leave", { payload: ClassId, error: Schema.Union([Forbidden, NotFound]) }),
+  // The stream of a class the student is in: the teacher's posts, newest first.
+  // What a class code opens, before joining, so the student can confirm it is the right class.
+  Rpc.make("preview", {
+    payload: { code: Schema.String },
+    success: Schema.Struct({
+      courseCode: Schema.String,
+      title: Schema.String,
+      section: Schema.String,
+      term: Schema.String,
+      schedule: Schema.String,
+      room: Schema.String,
+      units: Schema.Number,
+      teacher: Schema.String,
+      joined: Schema.Boolean,
+    }),
+    error: Schema.Union([Forbidden, NotFound, TooManyRequests]),
+  }),
+  // A student's own announcement to a class they are in; the answer is the new post.
+  Rpc.make("post", { payload: { ...ClassId, post: PostFields }, success: Announcement, error: Schema.Union([Forbidden, NotFound]) }),
+  Rpc.make("deletePost", { payload: { ...ClassId, announcementId: Schema.String }, error: Schema.Union([Forbidden, NotFound]) }),
+  // Who is in a class the student belongs to: names only.
+  Rpc.make("people", {
+    payload: ClassId,
+    success: Schema.Struct({ teachers: Schema.Array(Schema.String), classmates: Schema.Array(Schema.String) }),
+    error: Schema.Union([Forbidden, NotFound]),
+  }),
+  Rpc.make("announcements", { payload: ClassId, success: Schema.Array(Announcement), error: Schema.Union([Forbidden, NotFound]) }),
 )
   .prefix("enrollment.")
   .middleware(AuthMiddleware) {}

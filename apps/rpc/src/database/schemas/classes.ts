@@ -1,10 +1,11 @@
 // An organization's classes, and the students on their rosters. Students join a class with its code; a roster entry
 // can also come from Google Classroom or the demo data without an account behind it.
+import type { Attachment, RubricRow } from "@examinus/domain/classes";
 import type { AttendanceStatus } from "@examinus/domain/attendance";
 import type { ClassRecord } from "@examinus/contract/class-record";
 import { sexNames, subjectAreaNames } from "@examinus/domain/roles";
 import { sql } from "drizzle-orm";
-import { date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { createdAt, timestamps, timestamptz } from "./_helpers.ts";
 import { users } from "./auth.ts";
 import { organizations } from "./organizations.ts";
@@ -29,7 +30,13 @@ export const classes = pgTable(
     term: text("term").notNull().default(""),
     schedule: text("schedule").notNull().default(""),
     room: text("room").notNull().default(""),
+    // The class's online room link (Meet, Zoom, Teams); "" when it has none.
+    eroomUrl: text("eroom_url").notNull().default(""),
     units: integer("units").notNull().default(3),
+    // One of the names in `classColors` (packages/domain); null: the theme's colour.
+    color: text("color"),
+    // The asset id of the picture behind the class banner (an uploaded image); null: just the colour.
+    headerImage: text("header_image"),
     // What students enter to join. Unique across organizations: the code says which one the class is in.
     joinCode: text("join_code").notNull().unique(),
     // The Google Classroom course this class mirrors, if it was imported.
@@ -121,3 +128,101 @@ export const classRecords = pgTable("class_records", {
 
 export type ClassItem = typeof classes.$inferSelect;
 export type StudentItem = typeof students.$inferSelect;
+
+// What a teacher posts to a class's stream. Deleted with the class.
+export const classAnnouncements = pgTable(
+  "class_announcements",
+  {
+    id: text("id").primaryKey(),
+    classId: text("class_id")
+      .notNull()
+      .references(() => classes.id, { onDelete: "cascade" }),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // "announcement", "assignment" or "activity".
+    kind: text("kind").notNull().default("announcement"),
+    title: text("title").notNull().default(""),
+    body: text("body").notNull().default(""),
+    dueAt: timestamptz("due_at"),
+    // Links, YouTube videos and Drive files the post points to (see `Attachment` in the domain package).
+    attachments: jsonb("attachments").$type<Attachment[]>().notNull().default(sql`'[]'::jsonb`),
+    // Assignments: points, a time limit in minutes and a rubric (rows of criterion and points).
+    points: integer("points"),
+    timeLimitMinutes: integer("time_limit_minutes"),
+    rubric: jsonb("rubric").$type<RubricRow[]>().notNull().default(sql`'[]'::jsonb`),
+    // Assignments and activities: whether students can still turn work in.
+    acceptingSubmissions: boolean("accepting_submissions").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("class_announcements_class_id_idx").on(t.classId, t.createdAt)],
+);
+export type AnnouncementItem = typeof classAnnouncements.$inferSelect;
+
+// The links on a class's Resources shelf, oldest first. Deleted with the class.
+export const classResources = pgTable(
+  "class_resources",
+  {
+    id: text("id").primaryKey(),
+    classId: text("class_id")
+      .notNull()
+      .references(() => classes.id, { onDelete: "cascade" }),
+    // "link", "youtube" or "drive": picks the icon.
+    kind: text("kind").notNull().default("link"),
+    url: text("url").notNull(),
+    title: text("title").notNull(),
+    detail: text("detail").notNull().default(""),
+    createdAt: createdAt(),
+  },
+  (t) => [index("class_resources_class_id_idx").on(t.classId, t.createdAt)],
+);
+export type ResourceItem = typeof classResources.$inferSelect;
+
+// A student's work on an assignment or activity. One row per post and student, made the first time they turn in.
+export const postSubmissions = pgTable(
+  "post_submissions",
+  {
+    id: text("id").primaryKey(),
+    announcementId: text("announcement_id")
+      .notNull()
+      .references(() => classAnnouncements.id, { onDelete: "cascade" }),
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    // Files (`asset:<id>`), links, videos and Drive files, like a post's.
+    attachments: jsonb("attachments").$type<Attachment[]>().notNull().default(sql`'[]'::jsonb`),
+    // Null: not turned in (or taken back).
+    turnedInAt: timestamptz("turned_in_at"),
+    score: integer("score"),
+    // Null: the student doesn't see the score yet.
+    returnedAt: timestamptz("returned_at"),
+    ...timestamps,
+  },
+  (t) => [unique("post_submissions_post_student_unique").on(t.announcementId, t.studentId)],
+);
+export type SubmissionItem = typeof postSubmissions.$inferSelect;
+
+// The private conversation between one student and the teacher about an assignment or activity. Deleted with the post
+// or the student.
+export const postComments = pgTable(
+  "post_comments",
+  {
+    id: text("id").primaryKey(),
+    announcementId: text("announcement_id")
+      .notNull()
+      .references(() => classAnnouncements.id, { onDelete: "cascade" }),
+    // Whose thread it is: the student on the roster.
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id, { onDelete: "cascade" }),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Written by the teacher rather than the student.
+    fromTeacher: boolean("from_teacher").notNull().default(false),
+    body: text("body").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("post_comments_thread_idx").on(t.announcementId, t.studentId, t.createdAt)],
+);
+export type CommentItem = typeof postComments.$inferSelect;

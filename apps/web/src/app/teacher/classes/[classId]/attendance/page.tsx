@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 import { CalendarCheck } from "lucide-react";
 import { Badge, ButtonLink, Card, CardHeader, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import { attendancePolicy, termOf } from "@examinus/domain/attendance";
+import { attendancePoints } from "@examinus/domain/class-record";
 import { statusLabel } from "@/features/attendance/labels";
 import { getAttendance } from "@/features/attendance/data";
 import { getStoredRecord } from "@/features/records/data/record";
-import { formatDay, fullName } from "@/lib/format";
+import { fullName } from "@/lib/format";
+import { formatDay, manilaNoon } from "@examinus/copy/time";
 import { AttendanceExcel } from "@/features/attendance/components/attendance-excel";
 import { DropButton } from "@/features/attendance/components/drop-button";
 
@@ -53,7 +55,7 @@ export default async function AttendancePage(props: PageProps<"/teacher/classes/
           <div className="flex items-center gap-3">
             <CalendarCheck className="size-6 text-primary" aria-hidden />
             <div>
-              <p className="font-semibold">{formatDay(`${m.date}T12:00:00+08:00`)}</p>
+              <p className="font-semibold">{formatDay(manilaNoon(m.date))}</p>
               <p className="text-sm text-muted">Attendance not taken yet</p>
             </div>
           </div>
@@ -72,8 +74,8 @@ export default async function AttendancePage(props: PageProps<"/teacher/classes/
           }
         />
         <p className="border-b border-border bg-info-soft px-5 py-2 text-sm text-info">
-          These absences fill in the class record&apos;s No. of Absences, and its Attendance item scores meetings held
-          minus absences.
+          These absences fill in the class record&apos;s No. of Absences, and its Attendance item is worth {attendancePoints}
+          points in each term (you can change it in the record), lowered by each absence.
         </p>
         <Table>
           <thead>
@@ -147,7 +149,7 @@ export default async function AttendancePage(props: PageProps<"/teacher/classes/
             <tbody>
               {meetings.map((m) => (
                 <tr key={m.id}>
-                  <Td className="font-medium whitespace-nowrap">{formatDay(`${m.date}T12:00:00+08:00`)}</Td>
+                  <Td className="font-medium whitespace-nowrap">{formatDay(manilaNoon(m.date))}</Td>
                   <Td className="hidden text-muted sm:table-cell">{termOf(m.date) === "midterm" ? "Midterm" : "Final term"}</Td>
                   {m.takenAt ? (
                     (["late", "absent", "excused"] as const).map((s) => (

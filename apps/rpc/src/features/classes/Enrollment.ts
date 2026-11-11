@@ -2,17 +2,19 @@
 import { Conflict, Forbidden, NotFound, TooManyRequests } from "@examinus/contract/errors";
 import { can, grantsOf } from "@examinus/domain/permissions";
 import { parseMemberRoles } from "@examinus/domain/roles";
+import type { PostFields } from "@examinus/domain/classes";
 import { type SessionUser } from "@examinus/domain/user";
 import { Context, Effect, Layer } from "effect";
 import type { Headers as EffectHeaders } from "effect/http";
 import { newId } from "../../platform/ids.ts";
-import type { ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, StudentItem } from "../../database/schemas/index.ts";
 import { limits, RateLimiter } from "../../platform/RateLimiter.ts";
-import { BetterAuth } from "../auth/BetterAuth.ts";
-import { webHeaders, type Actor } from "../auth/Session.ts";
+import { BetterAuth, webHeaders } from "../auth/BetterAuth.ts";
+import { type Actor } from "../auth/Session.ts";
 import { OrganizationRepo } from "../organization/Repo.ts";
-import { ClassService, type ClassWithRoster } from "./Service.ts";
+import { ClassService, postValues, type ClassWithRoster } from "./Service.ts";
 import { ClassRepo, type Sex } from "./Repo.ts";
+import { ClassRoster } from "./Roster.ts";
 import { normalizeCode, splitName } from "./rules.ts";
 
 export class EnrollmentService extends Context.Service<
@@ -30,12 +32,32 @@ export class EnrollmentService extends Context.Service<
       headers: EffectHeaders.Headers,
     ) => Effect.Effect<{ classId: string }, Forbidden | NotFound | Conflict | TooManyRequests>;
     readonly leave: (actor: Actor, classId: string) => Effect.Effect<void, NotFound>;
+    // The announcements of a class the student belongs to, newest first.
+    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<(AnnouncementItem & { authorName: string })[], NotFound>;
+    // What a join code opens, before joining: so the student can confirm. Wrong codes count against the same limit as joining.
+    readonly preview: (
+      user: SessionUser,
+      code: string,
+    ) => Effect.Effect<
+      { courseCode: string; title: string; section: string; term: string; schedule: string; room: string; units: number; teacher: string; joined: boolean },
+      NotFound | TooManyRequests
+    >;
+    // A student's own announcement to the class (text and links only; assignments and activities are the teacher's).
+    readonly post: (actor: Actor, classId: string, post: PostFields) => Effect.Effect<AnnouncementItem, NotFound>;
+    // Removes the student's own announcement.
+    readonly deletePost: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<void, NotFound>;
+    // The names of the teacher and the students of a class the student belongs to.
+    readonly people: (
+      actor: Actor,
+      classId: string,
+    ) => Effect.Effect<{ teacher: string | null; classmates: { firstName: string; lastName: string }[] }, NotFound>;
   }
 >()("examinus/api/EnrollmentService") {
   static readonly layer = Layer.effect(
     EnrollmentService,
     Effect.gen(function* () {
       const repo = yield* ClassRepo;
+      const roster = yield* ClassRoster;
       const classes = yield* ClassService;
       const limiter = yield* RateLimiter;
       const organizations = yield* OrganizationRepo;
@@ -49,7 +71,7 @@ export class EnrollmentService extends Context.Service<
         if (!account?.verified) return null;
         const claimed = yield* repo.claimByEmail(actor.organizationId, actor.id, account.email);
         if (!claimed) return null;
-        for (const classId of yield* repo.classIdsOf(claimed.id)) yield* repo.joinSessions(classId, actor.id);
+        yield* roster.claimed(claimed.id);
         return claimed;
       });
 
@@ -114,8 +136,7 @@ export class EnrollmentService extends Context.Service<
             student = yield* repo.studentOf(organizationId, user.id);
           }
           if (!student) return yield* Effect.die(`No roster entry for student ${user.id} after creating it.`);
-          yield* repo.addMember(classId, student.id);
-          yield* repo.joinSessions(classId, user.id);
+          yield* roster.joined(classId, student.id);
           if ((user.organization?.id ?? null) !== organizationId) {
             yield* auth
               .call((api) => api.setActiveOrganization({ headers: webHeaders(headers), body: { organizationId } }))
@@ -126,9 +147,44 @@ export class EnrollmentService extends Context.Service<
 
         leave: Effect.fn("EnrollmentService.leave")(function* (actor, classId) {
           const student = yield* rosterEntry(actor);
-          const left = student ? yield* repo.removeMember(classId, student.id) : false;
+          const left = student ? yield* roster.left(classId, student.id) : false;
           if (!left) return yield* new NotFound({ message: "You're not in that class." });
-          yield* repo.leaveSessions(classId, actor.id);
+        }),
+
+        announcements: Effect.fn("EnrollmentService.announcements")(function* (actor, classId) {
+          const member = yield* repo.membership(actor.id, classId);
+          if (!member) return yield* new NotFound({ message: "You're not in that class." });
+          return yield* repo.announcements(classId);
+        }),
+
+        preview: Effect.fn("EnrollmentService.preview")(function* (user, code) {
+          yield* limiter.check(limits.joinCode, user.id);
+          const found = yield* repo.previewByJoinCode(normalizeCode(code));
+          if (!found) {
+            yield* limiter.count(limits.joinCode, user.id);
+            return yield* new NotFound({ message: "No class uses that code. Check it with your teacher." });
+          }
+          const { cls, teacher } = found;
+          const joined = (yield* repo.membership(user.id, cls.id)) !== null;
+          return { courseCode: cls.courseCode, title: cls.title, section: cls.section, term: cls.term, schedule: cls.schedule, room: cls.room, units: cls.units, teacher, joined };
+        }),
+
+        post: Effect.fn("EnrollmentService.post")(function* (actor, classId, post) {
+          const member = yield* repo.membership(actor.id, classId);
+          if (!member) return yield* new NotFound({ message: "You're not in that class." });
+          const values = yield* postValues({ ...post, kind: "announcement" });
+          return yield* repo.insertAnnouncement({ id: newId("an"), classId, authorId: actor.id, kind: "announcement", ...values });
+        }),
+
+        deletePost: Effect.fn("EnrollmentService.deletePost")(function* (actor, classId, announcementId) {
+          const removed = yield* repo.deleteOwnAnnouncement(classId, announcementId, actor.id);
+          if (!removed) return yield* new NotFound({ message: "You can only remove your own announcements." });
+        }),
+
+        people: Effect.fn("EnrollmentService.people")(function* (actor, classId) {
+          const member = yield* repo.membership(actor.id, classId);
+          if (!member) return yield* new NotFound({ message: "You're not in that class." });
+          return yield* repo.people(classId);
         }),
       });
     }),

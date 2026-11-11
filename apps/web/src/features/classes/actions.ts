@@ -4,15 +4,25 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Result, Schema, SchemaGetter } from "effect";
 import { subjectAreaNames } from "@examinus/domain/roles";
-import { parseForm } from "@/lib/validate";
+import { attachmentKinds, classColorNames, resourceKinds, type PostFields } from "@examinus/domain/classes";
+import { parseForm, required } from "@/lib/validate";
 import {
   archiveClass,
   createClass,
   newJoinCode,
   removeStudent,
+  postAnnouncement,
+  updateAnnouncement,
+  deleteAnnouncement,
+  addResource,
+  deleteResource,
   updateClass,
+  customizeClass,
   connectClassroom,
   importClassroomCourses,
+  postMyAnnouncement,
+  previewClass,
+  deleteMyAnnouncement,
   syncClassroomRoster,
   joinClass,
   leaveClass,
@@ -23,10 +33,6 @@ import { applyCookies } from "@/lib/api/client";
 export type ClassFormState = { error: string } | undefined;
 
 // Form fields with messages for people; the API checks the same rules again.
-const required =
-  (message: string) =>
-  <S extends Schema.Top>(self: S) =>
-    self.pipe(Schema.annotateKey({ messageMissingKey: message }));
 const text = (max: number, label: string) =>
   Schema.Trim.check(Schema.isMaxLength(max, { message: `Use at most ${max} characters for the ${label}.` }));
 const requiredText = (max: number, label: string, missing: string) =>
@@ -46,10 +52,19 @@ const fields = Schema.Struct({
     }),
     required("Choose a subject."),
   ),
+  // "": the theme's colour.
+  color: Schema.Literals(["", ...classColorNames]).pipe(
+    Schema.decodeTo(Schema.NullOr(Schema.Literals(classColorNames)), {
+      decode: SchemaGetter.transform((v) => (v === "" ? null : v)),
+      encode: SchemaGetter.transform((v) => v ?? ""),
+    }),
+    required("Choose a colour."),
+  ),
   section: text(60, "section").pipe(required("Enter the section.")),
   term: text(60, "term").pipe(required("Enter the term.")),
   schedule: text(80, "schedule").pipe(required("Enter the schedule.")),
   room: text(60, "room").pipe(required("Enter the room.")),
+  eroomUrl: text(300, "eroomUrl"),
   units: Schema.FiniteFromString.check(Schema.isInt({ message: unitsMessage }), Schema.isBetween({ minimum: 0, maximum: 12 }, { message: unitsMessage })).pipe(
     required(unitsMessage),
   ),
@@ -93,6 +108,136 @@ export async function removeStudentAction(classId: string, studentId: string): P
   revalidatePath(`/teacher/classes/${classId}`, "layout");
 }
 
+// The post a dialog's form describes, or what is wrong with it.
+function readPost(formData: FormData): PostFields | { error: string } {
+  const rawKind = String(formData.get("kind") ?? "");
+  const kind = rawKind === "assignment" || rawKind === "activity" ? rawKind : "announcement";
+  const title = String(formData.get("title") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  if (kind === "announcement" && !body) return { error: "Write something to announce." };
+  if (kind !== "announcement" && !title) return { error: "Give it a title." };
+  if (title.length > 150) return { error: "Use at most 150 characters for the title." };
+  if (body.length > 5000) return { error: "Use at most 5000 characters." };
+  // A datetime-local value ("2026-11-20T23:59"); empty means no deadline.
+  const due = String(formData.get("dueAt") ?? "");
+  const dueDate = due ? new Date(due) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) return { error: "That due date isn't valid." };
+  // The attachments the dialog collected, as JSON; each is checked again by the API.
+  let attachments: PostFields["attachments"] = [];
+  try {
+    const parsed: unknown = JSON.parse(String(formData.get("attachments") || "[]"));
+    if (Array.isArray(parsed)) {
+      attachments = parsed.flatMap((a) =>
+        a && typeof a === "object" && attachmentKinds.includes(a.kind) && typeof a.url === "string"
+          ? [{ kind: a.kind, url: a.url, title: typeof a.title === "string" ? a.title : "" }]
+          : [],
+      );
+    }
+  } catch {
+    return { error: "The attachments couldn't be read." };
+  }
+  // An assignment's points, time limit (minutes) and rubric; the API checks them again.
+  const wholeNumber = (name: string, label: string): number | null | { error: string } => {
+    const raw = String(formData.get(name) ?? "").trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : { error: `${label} must be a whole number.` };
+  };
+  const points = wholeNumber("points", "Points");
+  if (points !== null && typeof points === "object") return points;
+  const timeLimit = wholeNumber("timeLimit", "The time limit");
+  if (timeLimit !== null && typeof timeLimit === "object") return timeLimit;
+  let rubric: NonNullable<PostFields["rubric"]> = [];
+  try {
+    const parsed: unknown = JSON.parse(String(formData.get("rubric") || "[]"));
+    if (Array.isArray(parsed))
+      rubric = parsed.flatMap((r) =>
+        r && typeof r === "object" && typeof r.criterion === "string" && Number.isInteger(r.points) ? [{ criterion: r.criterion, points: r.points as number }] : [],
+      );
+  } catch {
+    return { error: "The rubric couldn't be read." };
+  }
+  return {
+    kind,
+    title,
+    body,
+    attachments,
+    dueAt: kind === "announcement" || !dueDate ? null : dueDate.toISOString(),
+    ...(kind === "assignment" && { points, timeLimitMinutes: timeLimit === 0 ? null : timeLimit, rubric }),
+  };
+}
+
+export async function postAnnouncementAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await postAnnouncement(classId, post);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function updateAnnouncementAction(
+  classId: string,
+  announcementId: string,
+  _prev: ClassFormState,
+  formData: FormData,
+): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await updateAnnouncement(classId, announcementId, post);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function deleteAnnouncementAction(classId: string, announcementId: string): Promise<ClassFormState> {
+  const error = await deleteAnnouncement(classId, announcementId);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+// The "Add resource" dialog: a kind, an address, a title and one short line under it.
+export async function addResourceAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const rawKind = String(formData.get("kind") ?? "link");
+  const kind = (resourceKinds as readonly string[]).includes(rawKind) ? (rawKind as (typeof resourceKinds)[number]) : "link";
+  const url = String(formData.get("url") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  if (!url) return { error: kind === "file" ? "Choose a file to upload." : "Paste the address of the resource." };
+  if (!title) return { error: "Give the resource a title." };
+  const error = await addResource(classId, { kind, url, title, detail: String(formData.get("detail") ?? "").trim() });
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+export async function deleteResourceAction(classId: string, resourceId: string): Promise<ClassFormState> {
+  const error = await deleteResource(classId, resourceId);
+  if (error) return { error };
+  revalidatePath(`/teacher/classes/${classId}`, "layout");
+}
+
+// A student's own announcement: text, links and files; never an assignment or activity.
+export async function postMyAnnouncementAction(classId: string, _prev: ClassFormState, formData: FormData): Promise<ClassFormState> {
+  const post = readPost(formData);
+  if ("error" in post) return post;
+  const error = await postMyAnnouncement(classId, { ...post, kind: "announcement", dueAt: null });
+  if (error) return { error };
+  revalidatePath(`/student/classes/${classId}`, "layout");
+}
+
+export async function deleteMyAnnouncementAction(classId: string, announcementId: string): Promise<ClassFormState> {
+  const error = await deleteMyAnnouncement(classId, announcementId);
+  if (error) return { error };
+  revalidatePath(`/student/classes/${classId}`, "layout");
+}
+
+// "Customize" on the class banner: its colour and picture ("" clears either).
+export async function customizeClassAction(classId: string, color: string, headerImage: string): Promise<ClassFormState> {
+  const error = await customizeClass(classId, {
+    color: classColorNames.find((name) => name === color) ?? null,
+    headerImage: headerImage || null,
+  });
+  if (error) return { error };
+  revalidatePath("/teacher", "layout");
+}
+
 // Sends the teacher to Google to allow read-only Classroom access; Google comes back to /teacher/classes/import.
 export async function connectClassroomAction() {
   const result = await connectClassroom();
@@ -131,6 +276,12 @@ export async function joinClassAction(_prev: JoinState, formData: FormData): Pro
   if (error) return { error };
   revalidatePath("/", "layout");
   return { joined: true };
+}
+
+export async function previewClassAction(code: string) {
+  const trimmed = code.trim();
+  if (!trimmed) return { error: "Enter the class code from your teacher." } as const;
+  return previewClass(trimmed);
 }
 
 export async function leaveClassAction(classId: string): Promise<{ error: string } | undefined> {

@@ -5,39 +5,20 @@ import "server-only";
 import { Option, Schema } from "effect";
 import { requireTeacher } from "@/lib/auth/dal";
 import { ClassRecord as ClassRecordSchema } from "@examinus/contract/class-record";
-import { type ClassSessionScores } from "@examinus/contract/session";
-import { blankRecord, courseResult, prepareRecord, type ClassRecord, type LinkedScores } from "@examinus/domain/class-record";
+import { assignmentSession, blankRecord, courseResult, setDropped, teacherRecord, type ClassRecord, type ScoredSession } from "@examinus/domain/class-record";
+import { manilaDate, termOf } from "@examinus/domain/attendance";
 import { classMeetings } from "@/features/attendance/data";
 import { read, write } from "@/lib/api/helpers";
 import { getClass, getClasses, getStudents } from "@/features/classes/data";
 
-// Scores for items linked to a quiz session: each student's latest submitted attempt. Teachers see them
-// whether or not results are released; one with an essay still being graded stays empty.
-function linkedScores(
-  record: ClassRecord,
-  sessions: readonly ClassSessionScores[],
-): { scores: LinkedScores; pending: Record<string, string[]> } {
-  const scores: LinkedScores = {};
-  const pending: Record<string, string[]> = {};
-  for (const term of ["midterm", "final"] as const)
-    for (const cat of record.terms[term])
-      for (const item of cat.items) {
-        if (!item.sessionId) continue;
-        const s = sessions.find((x) => x.sessionId === item.sessionId);
-        if (!s) continue;
-        scores[item.id] = {};
-        pending[item.id] = [];
-        for (const { studentId, score } of s.scores) {
-          scores[item.id][studentId] = score;
-          if (score === null) pending[item.id].push(studentId);
-        }
-      }
-  return { scores, pending };
-}
-
-// The teacher's sessions for a class with each student's score.
-async function classSessions(classId: string): Promise<readonly ClassSessionScores[]> {
-  return read((api) => api["session.classScores"]({ classId }));
+// What goes into a class's record with each student's score: its quiz and exam sessions, and its assignments worth
+// points (graded scores, whether or not they are returned yet).
+async function classSessions(classId: string): Promise<readonly ScoredSession[]> {
+  const [sessions, assignments] = await Promise.all([
+    read((api) => api["session.classScores"]({ classId })),
+    read((api) => api["work.recordScores"]({ classId })),
+  ]);
+  return [...sessions, ...assignments.map((a) => ({ ...assignmentSession(a), scores: a.scores }))];
 }
 
 export async function getClassRecord(classId: string) {
@@ -51,9 +32,7 @@ export async function getClassRecord(classId: string) {
     classSessions(classId),
     classMeetings(classId),
   ]);
-  const { record, scores: fromAttendance, taken: attendanceTaken } = prepareRecord(stored, cls, sessions, meetings);
-  const { scores: fromExams, pending } = linkedScores(record, sessions);
-  const linked = { ...fromExams, ...fromAttendance };
+  const { record, linked, pending, attendanceTaken } = teacherRecord(stored, cls, sessions, meetings);
   // Sessions for this class that an item can be linked to, with their total points.
   const linkable = sessions.map((s) => ({ id: s.sessionId, title: s.title, kind: s.mode, maxScore: s.maxScore }));
   const attendance = {
@@ -61,7 +40,9 @@ export async function getClassRecord(classId: string) {
     // A meeting today or earlier that still needs attendance.
     open: meetings.filter((m) => !m.takenAt).length,
   };
-  return { cls, record, students: roster, linked, pending, linkable, attendanceTaken, attendance };
+  // The term today falls in: the one the page opens on, where a quiz started now is added.
+  const currentTerm = termOf(manilaDate());
+  return { cls, record, students: roster, linked, pending, linkable, attendanceTaken, attendance, currentTerm };
 }
 
 // The teacher's class record as saved, without linked scores or attendance; null before the first save.
@@ -84,6 +65,14 @@ export async function saveClassRecord(raw: ClassRecord, classId: string): Promis
   return "error" in outcome ? outcome.error : null;
 }
 
+// Marks a student as dropped (DR). Starts from what's stored (not the attendance-filled copy) so absences stay computed.
+// Returns an error message, or null when saved.
+export async function markStudentDropped(classId: string, studentId: string): Promise<string | null> {
+  if (!(await getClass(classId))) return "That class doesn't exist.";
+  const stored = (await getStoredRecord(classId)) ?? blankRecord(classId);
+  return saveClassRecord(setDropped(stored, studentId, true), classId);
+}
+
 // The Summary Report on Class Academic Performance: per class, how many passed, failed, FA and DR.
 export async function getSummaryReport() {
   const user = await requireTeacher();
@@ -95,8 +84,7 @@ export async function getSummaryReport() {
         const counts = { P: 0, F: 0, FA: 0, DR: 0 };
         if (record) {
           const [sessions, meetings] = await Promise.all([classSessions(cls.id), classMeetings(cls.id)]);
-          const { record: withAttendance, scores: fromAttendance } = prepareRecord(record, cls, sessions, meetings);
-          const linked = { ...linkedScores(withAttendance, sessions).scores, ...fromAttendance };
+          const { record: withAttendance, linked } = teacherRecord(record, cls, sessions, meetings);
           for (const sid of cls.studentIds) counts[courseResult(withAttendance, linked, sid).remark]++;
         }
         return { cls, hasRecord: !!record, total: cls.studentIds.length, counts };

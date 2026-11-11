@@ -5,16 +5,12 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Result, Schema } from "effect";
 import { callApi, forwardedHeaders } from "@/lib/api/client";
-import { emailPattern, parseForm } from "@/lib/validate";
+import { emailPattern, parseForm, required } from "@/lib/validate";
 
 export type FormState = { error: string } | { saved: string } | undefined;
 
 // Form fields with messages for people; the API validates the same rules again and enforces permissions.
 // The role is the platform role (admin or user); organization roles are managed in the organization.
-const required =
-  (message: string) =>
-  <S extends Schema.Top>(self: S) =>
-    self.pipe(Schema.annotateKey({ messageMissingKey: message }));
 const name = Schema.Trim.check(
   Schema.isMinLength(1, { message: "Enter a name." }),
   Schema.isMaxLength(100, { message: "Use a name of at most 100 characters." }),

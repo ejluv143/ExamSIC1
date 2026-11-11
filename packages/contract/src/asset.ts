@@ -2,7 +2,7 @@
 // views images through short-lived signed URLs. Questions, choices and answers refer to an image by its asset id.
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { AssetMime, AssetPurpose } from "@examinus/domain/asset";
+import { AssetMime, AssetPurpose, FileMime } from "@examinus/domain/asset";
 import { Conflict, Forbidden, NotFound } from "./errors.ts";
 import { AuthMiddleware } from "./middleware.ts";
 
@@ -19,8 +19,9 @@ export type UploadTarget = typeof UploadTarget.Type;
 export const AssetInfo = Schema.Struct({
   assetId: Schema.String,
   sizeBytes: Schema.Int,
-  width: Schema.Int,
-  height: Schema.Int,
+  // Null for a file that isn't an image.
+  width: Schema.NullOr(Schema.Int),
+  height: Schema.NullOr(Schema.Int),
 });
 export type AssetInfo = typeof AssetInfo.Type;
 
@@ -35,7 +36,13 @@ export class AssetRpcs extends RpcGroup.make(
   // Teachers upload `question` images, students `answer` images. S3 itself refuses another type or a file
   // over 5 MB. StorageUnavailable when the API has no S3 settings.
   Rpc.make("createUpload", {
-    payload: { purpose: AssetPurpose, mime: AssetMime, size: Schema.Int },
+    // `fileName`: the name a `post` file is downloaded as.
+    payload: {
+      purpose: AssetPurpose,
+      mime: Schema.Union([AssetMime, FileMime]),
+      size: Schema.Int,
+      fileName: Schema.optionalKey(Schema.String),
+    },
     success: UploadTarget,
     error: Schema.Union([Forbidden, Conflict, StorageUnavailable]),
   }),

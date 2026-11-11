@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { endedText } from "@examinus/copy/paper";
 import { useRouter } from "next/navigation";
 import { Lock, MessageSquareWarning, Pause, WifiOff } from "lucide-react";
 import { refusalScreen } from "@examinus/copy/errors";
@@ -10,6 +11,7 @@ import Link from "next/link";
 import { FullscreenToggle } from "@/components/fullscreen-toggle";
 import { ThemeMenu } from "@/components/theme-menu";
 import { DesktopExitLock } from "./desktop-exit-lock";
+import { DesktopLockdown } from "./desktop-lockdown";
 import { MasteryPlayer } from "@/features/mastery/components/mastery-player";
 import { OnlineExam } from "@/features/exam/components/online-exam";
 import { Button } from "@/components/ui";
@@ -33,12 +35,6 @@ const noSubscribe = () => () => {};
 
 type LiveState = Extract<LiveStudentEvent, { _tag: "state" }>;
 type Warning = { message: string; at: string };
-
-const endedText: Record<StudentEndReason, string> = {
-  teacher: "Your teacher submitted your attempt.",
-  session_ended: "Your teacher ended the session, so your attempt was submitted.",
-  time_up: "Time ran out, so your attempt was submitted.",
-};
 
 export function StudentExam({
   paper,
@@ -133,6 +129,7 @@ export function StudentExam({
       ref={root}
       className="@container fixed inset-0 z-40 overflow-y-auto bg-background p-4 sm:p-8 [&:fullscreen]:overflow-y-auto [&:fullscreen]:bg-background"
     >
+      <DesktopLockdown locked={!!attemptId && !ended && shown.session.integrity.requireFullscreen} />
       <DesktopExitLock sessionId={sessionId} locked={!!attemptId && !ended && paper.session.exitPasswordRequired} />
       <div className="mx-auto mb-4 flex max-w-5xl items-center justify-between gap-2 text-sm @5xl:max-w-none">
         {hrefs.list ? (

@@ -13,5 +13,11 @@ export function parseForm<S extends Schema.ConstraintDecoder<unknown>>(
   );
 }
 
+// Marks a form field as required, with the message people see when it is missing. Shared by every form's schema.
+export const required =
+  (message: string) =>
+  <S extends Schema.Top>(self: S) =>
+    self.pipe(Schema.annotateKey({ messageMissingKey: message }));
+
 // Same address check as the sign-in and account forms have always used.
 export const emailPattern = /^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/;

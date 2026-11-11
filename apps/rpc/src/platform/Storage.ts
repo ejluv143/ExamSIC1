@@ -20,6 +20,9 @@ export class StorageNotConfigured extends Schema.TaggedError<StorageNotConfigure
 
 const unavailable = new StorageNotConfigured();
 
+// The plain-ASCII form of a file name for the `filename=` part of a download header (the UTF-8 form follows it).
+const asciiName = (name: string) => name.replace(/[^\x20-\x7e]/g, "_").replace(/[\\"]/g, "_");
+
 // Images in an S3-compatible bucket (AWS S3, Cloudflare R2, or Garage locally). Optional: without the S3_*
 // settings the API still starts, every call here fails with `StorageNotConfigured`, and images are unavailable.
 // S3_PUBLIC_ENDPOINT is the address browsers reach the bucket at when that differs from the API's own
@@ -32,11 +35,12 @@ export class Storage extends Context.Service<
     readonly presignUpload: (
       key: string,
       mime: string,
+      maxBytes?: number,
     ) => Effect.Effect<{ url: string; fields: Record<string, string> }, StorageNotConfigured>;
-    // Signed GET URLs by key.
-    readonly signedUrls: (keys: readonly string[]) => Effect.Effect<Map<string, string>, StorageNotConfigured>;
+    // Signed GET URLs by key. A key in `downloads` is served as a download under that file name.
+    readonly signedUrls: (keys: readonly string[], downloads?: ReadonlyMap<string, string>) => Effect.Effect<Map<string, string>, StorageNotConfigured>;
     // The object's bytes, or null when it doesn't exist (or is larger than the limit).
-    readonly read: (key: string) => Effect.Effect<Uint8Array | null, StorageNotConfigured>;
+    readonly read: (key: string, maxBytes?: number) => Effect.Effect<Uint8Array | null, StorageNotConfigured>;
     readonly remove: (keys: readonly string[]) => Effect.Effect<void, StorageNotConfigured>;
   }
 >()("examinus/api/Storage") {
@@ -73,31 +77,47 @@ export class Storage extends Context.Service<
 
       return Storage.of({
         configured,
-        presignUpload: (key, mime) =>
+        presignUpload: (key, mime, maxBytes = maxAssetBytes) =>
           Effect.promise(() =>
             createPresignedPost(external, {
               Bucket: bucket,
               Key: key,
               Expires: uploadSeconds,
               Fields: { "Content-Type": mime },
-              Conditions: [["content-length-range", 1, maxAssetBytes], ["eq", "$Content-Type", mime]],
+              Conditions: [["content-length-range", 1, maxBytes], ["eq", "$Content-Type", mime]],
             }),
           ).pipe(Effect.map(({ url, fields }) => ({ url, fields }))),
-        signedUrls: (keys) =>
+        signedUrls: (keys, downloads) =>
           Effect.promise(async () => {
             const entries = await Promise.all(
               keys.map(
                 async (key) =>
-                  [key, await getSignedUrl(external, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: viewSeconds })] as const,
+                  [
+                    key,
+                    await getSignedUrl(
+                      external,
+                      new GetObjectCommand({
+                        Bucket: bucket,
+                        Key: key,
+                        // Always a download, never shown in the page, and named like the file the teacher chose.
+                        ...(downloads?.has(key)
+                          ? {
+                              ResponseContentDisposition: `attachment; filename="${asciiName(downloads.get(key)!)}"; filename*=UTF-8''${encodeURIComponent(downloads.get(key)!)}`,
+                            }
+                          : {}),
+                      }),
+                      { expiresIn: viewSeconds },
+                    ),
+                  ] as const,
               ),
             );
             return new Map(entries);
           }),
-        read: (key) =>
+        read: (key, maxBytes = maxAssetBytes) =>
           Effect.promise(async () => {
             try {
               const head = await internal.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-              if ((head.ContentLength ?? 0) > maxAssetBytes) return null;
+              if ((head.ContentLength ?? 0) > maxBytes) return null;
               const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
               return (await object.Body?.transformToByteArray()) ?? null;
             } catch (cause) {

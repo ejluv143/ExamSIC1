@@ -1,11 +1,11 @@
 // The class record table (grade sheet) and the sessions an item of it can be linked to.
 import type { ClassRecord } from "@examinus/contract/class-record";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { Database } from "../../platform/Database.ts";
-import { organizationIs } from "../../platform/organization-scope.ts";
+import { ownedQuizzes } from "../../platform/organization-scope.ts";
 import type { Actor } from "../auth/Session.ts";
-import { classRecords, quizSessions, quizzes } from "../../database/schemas/index.ts";
+import { classAnnouncements, classRecords, quizSessions, quizzes } from "../../database/schemas/index.ts";
 
 type StoredRecord = typeof classRecords.$inferSelect;
 
@@ -24,7 +24,7 @@ export class RecordsRepo extends Context.Service<
   {
     // The class's record, or null before the teacher saves one.
     readonly find: (classId: string) => Effect.Effect<ClassRecord | null>;
-    // The teacher's own sessions (of their organization) for the class, the ones an item can be linked to.
+    // The teacher's own sessions (of their organization) for the class, and its assignments worth points: what an item can be linked to.
     readonly sessionIds: (classId: string, actor: Actor) => Effect.Effect<string[]>;
     readonly save: (
       classId: string,
@@ -49,14 +49,16 @@ export class RecordsRepo extends Context.Service<
               .from(quizSessions)
               .innerJoin(quizzes, eq(quizSessions.quizId, quizzes.id))
               .where(
-                and(
-                  eq(quizSessions.classId, classId),
-                  eq(quizzes.ownerId, actor.id),
-                  organizationIs(quizzes.organizationId, actor.organizationId),
-                ),
+                and(eq(quizSessions.classId, classId), ownedQuizzes(actor)),
               ),
           );
-          return rows.map((s) => s.id);
+          const posts = yield* db.query((d) =>
+            d
+              .select({ id: classAnnouncements.id })
+              .from(classAnnouncements)
+              .where(and(eq(classAnnouncements.classId, classId), eq(classAnnouncements.kind, "assignment"), gt(classAnnouncements.points, 0))),
+          );
+          return [...rows.map((s) => s.id), ...posts.map((p) => p.id)];
         }),
         save: Effect.fn("RecordsRepo.save")(function* (classId, record, updatedBy) {
           yield* db.query((d) =>

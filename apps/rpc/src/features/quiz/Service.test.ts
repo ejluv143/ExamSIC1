@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { QuizDetail, QuizDraft } from "@examinus/contract/quiz";
 import type { Question } from "@examinus/domain/question";
+import { quizTotals } from "@examinus/domain/shuffle";
 import { Effect, Layer } from "effect";
 import type { Actor } from "../auth/Session.ts";
 import { harness, stub } from "../../testing/config.ts";
@@ -60,7 +61,7 @@ const setup = (attempted: string[] = []) => {
       },
       detail: (quiz) => Effect.succeed({ quiz: toQuiz(quiz), parts } satisfies QuizDetail),
       listOwned: (actor) =>
-        Effect.succeed([{ quiz: quizRow({ ownerId: actor.id, organizationId: actor.organizationId }), parts, sessions: [sessionRow({ quizId: "quiz-1" })] }]),
+        Effect.succeed([{ quiz: quizRow({ ownerId: actor.id, organizationId: actor.organizationId }), totals: quizTotals(parts), sessions: [sessionRow({ quizId: "quiz-1" })] }]),
       hasAttempts: (quizId) => Effect.succeed(attempted.includes(quizId)),
       save: (actor, draft, existing) =>
         Effect.sync(() => {

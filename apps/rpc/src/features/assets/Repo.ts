@@ -2,22 +2,27 @@
 // see an image and which images are still in use. Questions, choices and drawing answers refer to an asset by id
 // inside markdown or jsonb, so "refers to" means the id appears in that text.
 import { assetIdsIn } from "@examinus/domain/asset";
-import { and, eq, inArray, isNull, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import type { Actor } from "../auth/Session.ts";
-import { bankVisibleTo } from "../bank/Repo.ts";
 import { Database, type Drizzle } from "../../platform/Database.ts";
-import { organizationIs } from "../../platform/organization-scope.ts";
+import { assetsIn, bankReach, ownedAssets, ownedQuizzes } from "../../platform/organization-scope.ts";
 import {
   answers,
   assets,
   attempts,
   bankQuestions,
+  classAnnouncements,
+  classResources,
+  classMembers,
+  classes,
+  postSubmissions,
   questions,
   quizParts,
   quizSessions,
   quizzes,
   sessionStudents,
+  studentProfiles,
   students,
   type AssetItem,
   type QuizSessionItem,
@@ -30,6 +35,7 @@ export type NewAssetRow = {
   purpose: AssetItem["purpose"];
   s3Key: string;
   mime: AssetItem["mime"];
+  fileName?: string | null;
 };
 
 const mentionsAsset = (column: SQLWrapper) => sql`${column}::text like '%asset-%'`;
@@ -65,7 +71,7 @@ export class AssetRepo extends Context.Service<
     readonly guestOrganization: (userId: string) => Effect.Effect<string | null>;
     readonly markReady: (
       assetId: string,
-      file: { sizeBytes: number; width: number; height: number; sha256: string },
+      file: { sizeBytes: number; width: number | null; height: number | null; sha256: string },
     ) => Effect.Effect<void>;
     readonly remove: (assetIds: readonly string[]) => Effect.Effect<void>;
     // The confirmed assets among `ids`, of that organization; `null` (guests and platform admins, who have none) filters nothing.
@@ -79,6 +85,10 @@ export class AssetRepo extends Context.Service<
     readonly rosterSessions: (studentId: string) => Effect.Effect<QuizSessionItem[]>;
     // The text of the quizzes' content.
     readonly quizText: (quizIds: readonly string[]) => Effect.Effect<string>;
+    // The attachments of work students turned in to the teacher's classes: only that teacher may see those files.
+    readonly submissionText: (teacherId: string) => Effect.Effect<string>;
+    // The attachments of the posts in the classes a student belongs to.
+    readonly memberPostText: (userId: string) => Effect.Effect<string>;
     // Every asset created before the cutoff.
     readonly createdBefore: (cutoff: Date) => Effect.Effect<AssetItem[]>;
     // The ids of the assets that any question, bank entry or answer refers to.
@@ -100,11 +110,7 @@ export class AssetRepo extends Context.Service<
               .select()
               .from(assets)
               .where(
-                and(
-                  eq(assets.id, assetId),
-                  eq(assets.ownerId, owner.id),
-                  owner.organizationId === null ? undefined : eq(assets.organizationId, owner.organizationId),
-                ),
+                and(eq(assets.id, assetId), ownedAssets(owner)),
               ),
           );
           return row ?? null;
@@ -131,11 +137,7 @@ export class AssetRepo extends Context.Service<
               .select()
               .from(assets)
               .where(
-                and(
-                  inArray(assets.id, [...ids]),
-                  eq(assets.status, "ready"),
-                  organizationId === null ? undefined : eq(assets.organizationId, organizationId),
-                ),
+                and(inArray(assets.id, [...ids]), eq(assets.status, "ready"), assetsIn(organizationId)),
               ),
           );
         }),
@@ -156,7 +158,7 @@ export class AssetRepo extends Context.Service<
         }),
 
         teacherText: Effect.fn("AssetRepo.teacherText")(function* (actor) {
-          const mine = and(eq(quizzes.ownerId, actor.id), organizationIs(quizzes.organizationId, actor.organizationId));
+          const mine = ownedQuizzes(actor);
           return yield* db.query(async (d) => {
             const blobs = [
               await quizText(d, mine),
@@ -164,7 +166,7 @@ export class AssetRepo extends Context.Service<
                 await d
                   .select({ text: sql<string>`${bankQuestions.question}::text` })
                   .from(bankQuestions)
-                  .where(bankVisibleTo(actor))
+                  .where(bankReach(actor))
               ).map((r) => r.text),
             ];
             const answered = await d
@@ -193,6 +195,39 @@ export class AssetRepo extends Context.Service<
           return yield* db.query((d) => quizText(d, inArray(quizzes.id, [...quizIds])));
         }),
 
+        submissionText: Effect.fn("AssetRepo.submissionText")(function* (teacherId) {
+          const rows = yield* db.query((d) =>
+            d
+              .select({ text: sql<string>`${postSubmissions.attachments}::text` })
+              .from(postSubmissions)
+              .innerJoin(classAnnouncements, eq(classAnnouncements.id, postSubmissions.announcementId))
+              .innerJoin(classes, eq(classes.id, classAnnouncements.classId))
+              .where(eq(classes.teacherId, teacherId)),
+          );
+          return rows.map((r) => r.text).join("\n");
+        }),
+
+        memberPostText: Effect.fn("AssetRepo.memberPostText")(function* (userId) {
+          const rows = yield* db.query((d) =>
+            d
+              .select({ text: sql<string>`${classAnnouncements.attachments}::text` })
+              .from(classAnnouncements)
+              .innerJoin(classMembers, eq(classMembers.classId, classAnnouncements.classId))
+              .innerJoin(students, eq(students.id, classMembers.studentId))
+              .where(eq(students.userId, userId)),
+          );
+          // The files on those classes' Resources shelves.
+          const shelf = yield* db.query((d) =>
+            d
+              .select({ text: classResources.url })
+              .from(classResources)
+              .innerJoin(classMembers, eq(classMembers.classId, classResources.classId))
+              .innerJoin(students, eq(students.id, classMembers.studentId))
+              .where(eq(students.userId, userId)),
+          );
+          return [...rows, ...shelf].map((r) => r.text).join("\n");
+        }),
+
         createdBefore: Effect.fn("AssetRepo.createdBefore")(function* (cutoff) {
           return yield* db.query((d) => d.select().from(assets).where(lt(assets.createdAt, cutoff)));
         }),
@@ -201,7 +236,21 @@ export class AssetRepo extends Context.Service<
           .query(async (d) => {
             const text = [
               await quizText(d, undefined),
+              ...(await d.select({ text: classes.headerImage }).from(classes).where(isNotNull(classes.headerImage))).map((r) => r.text ?? ""),
               ...(await d.select({ text: sql<string>`${bankQuestions.question}::text` }).from(bankQuestions)).map((r) => r.text),
+              // A student's picture and signature.
+              ...(await d.select({ text: studentProfiles.picture }).from(studentProfiles).where(isNotNull(studentProfiles.picture))).map((r) => r.text ?? ""),
+              ...(await d.select({ text: studentProfiles.signature }).from(studentProfiles).where(isNotNull(studentProfiles.signature))).map((r) => r.text ?? ""),
+              // Files students turned in.
+              ...(
+                await d.select({ text: sql<string>`${postSubmissions.attachments}::text` }).from(postSubmissions).where(mentionsAsset(postSubmissions.attachments))
+              ).map((r) => r.text),
+              // Files attached to class posts.
+              ...(
+                await d.select({ text: sql<string>`${classAnnouncements.attachments}::text` }).from(classAnnouncements).where(mentionsAsset(classAnnouncements.attachments))
+              ).map((r) => r.text),
+              // Files on a class's Resources shelf.
+              ...(await d.select({ text: classResources.url }).from(classResources).where(like(classResources.url, "asset:%"))).map((r) => r.text),
               ...(
                 await d.select({ text: sql<string>`${answers.value}::text` }).from(answers).where(mentionsAsset(answers.value))
               ).map((r) => r.text),

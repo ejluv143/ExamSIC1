@@ -151,6 +151,7 @@ export const assetRow = (over: Partial<AssetItem> = {}): AssetItem => ({
   purpose: "question",
   s3Key: "question/teacher-1/asset-00000000-0000-0000-0000-000000000001",
   mime: "image/png",
+  fileName: null,
   sizeBytes: 100,
   width: 10,
   height: 10,

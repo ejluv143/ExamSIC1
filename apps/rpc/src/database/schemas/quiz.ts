@@ -202,6 +202,9 @@ export const quizSessions = pgTable(
   (t) => [
     index("quiz_sessions_quiz_id_idx").on(t.quizId),
     index("quiz_sessions_class_id_idx").on(t.classId),
+    // The 30-second sweep: sessions to open (status, opens_at) and to end (status, closes_at).
+    index("quiz_sessions_status_opens_at_idx").on(t.status, t.opensAt),
+    index("quiz_sessions_status_closes_at_idx").on(t.status, t.closesAt),
     uniqueIndex("quiz_sessions_join_code_active_unique").on(t.joinCode).where(sql`${t.status} <> 'ended'`),
   ],
 );
@@ -277,6 +280,8 @@ export const attempts = pgTable(
   (t) => [
     uniqueIndex("attempts_session_student_number_unique").on(t.sessionId, t.studentId, t.attemptNumber),
     index("attempts_student_id_idx").on(t.studentId),
+    // The 30-second sweep reads only attempts still in progress, a tiny slice of a table that only grows.
+    index("attempts_in_progress_session_id_idx").on(t.sessionId).where(sql`${t.status} = 'in_progress'`),
   ],
 );
 

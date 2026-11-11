@@ -11,9 +11,9 @@ export const AssetHandlers = AssetRpcs.toLayer(
     const assets = yield* Assets;
 
     return AssetRpcs.of({
-      "asset.createUpload": Effect.fn("asset.createUpload")(function* ({ purpose, mime, size }) {
+      "asset.createUpload": Effect.fn("asset.createUpload")(function* ({ purpose, mime, size, fileName }) {
         const user = yield* requirePermission({ asset: ["create"] });
-        return yield* assets.createUpload(user, purpose, mime, size).pipe(Effect.catchTag("StorageNotConfigured", unavailable));
+        return yield* assets.createUpload(user, purpose, mime, size, fileName).pipe(Effect.catchTag("StorageNotConfigured", unavailable));
       }),
 
       "asset.confirm": Effect.fn("asset.confirm")(function* ({ assetId }) {

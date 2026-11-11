@@ -7,7 +7,7 @@ import { Effect, Layer } from "effect";
 import { requireActor, requirePermission } from "../auth/Session.ts";
 import { ClassroomService, type GoogleUnavailable } from "./Classroom.ts";
 import { EnrollmentService } from "./Enrollment.ts";
-import { toClassInfo, toRosterStudent, toTeacherClass } from "./mappers.ts";
+import { toAnnouncement, toClassInfo, toResource, toRosterStudent, toTeacherClass } from "./mappers.ts";
 import { ClassService } from "./Service.ts";
 
 export const ClassHandlers = ClassRpcs.toLayer(
@@ -26,6 +26,42 @@ export const ClassHandlers = ClassRpcs.toLayer(
         return found && toTeacherClass(found);
       }),
 
+      "class.announcements": Effect.fn("class.announcements")(function* ({ classId }) {
+        const me = yield* requireActor({ class: ["read"] });
+        const rows = yield* classes.announcements(me.actor, classId);
+        return rows.map(toAnnouncement);
+      }),
+
+      "class.postAnnouncement": Effect.fn("class.postAnnouncement")(function* ({ classId, post }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return toAnnouncement(yield* classes.postAnnouncement(me.actor, classId, post));
+      }),
+
+      "class.updateAnnouncement": Effect.fn("class.updateAnnouncement")(function* ({ classId, announcementId, post }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return toAnnouncement(yield* classes.updateAnnouncement(me.actor, classId, announcementId, post));
+      }),
+
+      "class.deleteAnnouncement": Effect.fn("class.deleteAnnouncement")(function* ({ classId, announcementId }) {
+        const me = yield* requireActor({ class: ["update"] });
+        yield* classes.deleteAnnouncement(me.actor, classId, announcementId);
+      }),
+
+      "class.resources": Effect.fn("class.resources")(function* ({ classId }) {
+        const me = yield* requireActor({ class: ["read"] });
+        return (yield* classes.resources(me.actor, classId)).map(toResource);
+      }),
+
+      "class.addResource": Effect.fn("class.addResource")(function* ({ classId, resource }) {
+        const me = yield* requireActor({ class: ["update"] });
+        return toResource(yield* classes.addResource(me.actor, classId, resource));
+      }),
+
+      "class.deleteResource": Effect.fn("class.deleteResource")(function* ({ classId, resourceId }) {
+        const me = yield* requireActor({ class: ["update"] });
+        yield* classes.deleteResource(me.actor, classId, resourceId);
+      }),
+
       "class.create": Effect.fn("class.create")(function* (fields) {
         const me = yield* requireActor({ class: ["create"] });
         return yield* classes.create(me.actor, fields);
@@ -34,6 +70,11 @@ export const ClassHandlers = ClassRpcs.toLayer(
       "class.update": Effect.fn("class.update")(function* ({ classId, fields }) {
         const me = yield* requireActor({ class: ["update"] });
         yield* classes.update(me.actor, classId, fields);
+      }),
+
+      "class.customize": Effect.fn("class.customize")(function* ({ classId, appearance }) {
+        const me = yield* requireActor({ class: ["update"] });
+        yield* classes.customize(me.actor, classId, appearance);
       }),
 
       "class.archive": Effect.fn("class.archive")(function* ({ classId }) {
@@ -81,9 +122,36 @@ export const EnrollmentHandlers = EnrollmentRpcs.toLayer(
         return yield* enrollment.join(user, input, headers);
       }),
 
+      "enrollment.preview": Effect.fn("enrollment.preview")(function* ({ code }) {
+        const user = yield* CurrentUser;
+        if (user.role !== "user") return yield* new Forbidden({ message: "Only students join classes." });
+        return yield* enrollment.preview(user, code);
+      }),
+
       "enrollment.leave": Effect.fn("enrollment.leave")(function* ({ classId }) {
         const me = yield* requireActor({ enrollment: ["delete"] });
         yield* enrollment.leave(me.actor, classId);
+      }),
+
+      "enrollment.post": Effect.fn("enrollment.post")(function* ({ classId, post }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return toAnnouncement({ ...(yield* enrollment.post(me.actor, classId, post)), authorName: me.name });
+      }),
+
+      "enrollment.deletePost": Effect.fn("enrollment.deletePost")(function* ({ classId, announcementId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        yield* enrollment.deletePost(me.actor, classId, announcementId);
+      }),
+
+      "enrollment.people": Effect.fn("enrollment.people")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        const { teacher, classmates } = yield* enrollment.people(me.actor, classId);
+        return { teachers: teacher ? [teacher] : [], classmates: classmates.map((s) => `${s.firstName} ${s.lastName}`.trim()) };
+      }),
+
+      "enrollment.announcements": Effect.fn("enrollment.announcements")(function* ({ classId }) {
+        const me = yield* requireActor({ enrollment: ["read"] });
+        return (yield* enrollment.announcements(me.actor, classId)).map(toAnnouncement);
       }),
     });
   }),

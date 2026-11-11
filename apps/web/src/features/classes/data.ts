@@ -1,6 +1,6 @@
 import "server-only";
 import { Result } from "effect";
-import type { ClassInfo, RosterStudent, ClassFields } from "@examinus/domain/classes";
+import type { ClassAppearance, ClassInfo, RosterStudent, ClassFields, PostFields, ResourceFields } from "@examinus/domain/classes";
 import type { Class, Student } from "./types";
 import { requirePermission, requireStudent } from "@/lib/auth/dal";
 import { apiCall, apiValue, messageOf } from "@/lib/api/helpers";
@@ -19,11 +19,14 @@ export const toClass = (c: ClassInfo & { readonly joinCode?: string }): Class =>
   term: c.term,
   schedule: c.schedule,
   room: c.room,
+  eroomUrl: c.eroomUrl,
   units: c.units,
   classroom: c.classroom,
   studentIds: [...c.studentIds],
   // Unset: the pages guess it from the course code and title.
   ...(c.subjectArea && { subjectArea: c.subjectArea }),
+  ...(c.color && { color: c.color }),
+  ...(c.headerImage && { headerImage: c.headerImage }),
   ...(c.joinCode !== undefined && { joinCode: c.joinCode }),
 });
 
@@ -61,6 +64,12 @@ export async function createClass(fields: ClassFields): Promise<string> {
 }
 
 // The rest return an error message, or null when done.
+// The banner's colour and picture.
+export async function customizeClass(classId: string, appearance: ClassAppearance) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.customize"]({ classId, appearance })));
+}
+
 export async function updateClass(classId: string, fields: ClassFields) {
   await requirePermission({ class: ["update"] });
   return messageOf(await apiCall((api) => api["class.update"]({ classId, fields })));
@@ -79,6 +88,45 @@ export async function newJoinCode(classId: string) {
 export async function removeStudent(classId: string, studentId: string) {
   await requirePermission({ roster: ["update"] });
   return messageOf(await apiCall((api) => api["class.removeStudent"]({ classId, studentId })));
+}
+
+// The class's announcements, newest first.
+export async function getAnnouncements(classId: string) {
+  await requirePermission({ class: ["read"] });
+  const result = await apiCall((api) => api["class.announcements"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+export async function postAnnouncement(classId: string, post: PostFields) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.postAnnouncement"]({ classId, post })));
+}
+
+export async function updateAnnouncement(classId: string, announcementId: string, post: PostFields) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.updateAnnouncement"]({ classId, announcementId, post })));
+}
+
+export async function deleteAnnouncement(classId: string, announcementId: string) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.deleteAnnouncement"]({ classId, announcementId })));
+}
+
+// The class's Resources shelf, oldest first.
+export async function getResources(classId: string) {
+  await requirePermission({ class: ["read"] });
+  const result = await apiCall((api) => api["class.resources"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+export async function addResource(classId: string, resource: ResourceFields) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.addResource"]({ classId, resource })));
+}
+
+export async function deleteResource(classId: string, resourceId: string) {
+  await requirePermission({ class: ["update"] });
+  return messageOf(await apiCall((api) => api["class.deleteResource"]({ classId, resourceId })));
 }
 
 // Asked once per request, however many functions on the page need it.
@@ -101,6 +149,30 @@ export async function getMyClasses() {
 
 // Before their first class, joining also asks for their student number and sex (for the teacher's grade sheet).
 // Also when their roster entry was imported from Google Classroom, which has neither yet.
+// The posts of a class the student belongs to, newest first.
+export async function getMyAnnouncements(classId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["enrollment.announcements"]({ classId }));
+  return Result.isSuccess(result) ? result.success : [];
+}
+
+export async function postMyAnnouncement(classId: string, post: PostFields) {
+  await requirePermission({ enrollment: ["read"] });
+  return messageOf(await apiCall((api) => api["enrollment.post"]({ classId, post })));
+}
+
+export async function deleteMyAnnouncement(classId: string, announcementId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  return messageOf(await apiCall((api) => api["enrollment.deletePost"]({ classId, announcementId })));
+}
+
+// Names of the teacher and the students of a class the student belongs to.
+export async function getMyPeople(classId: string) {
+  await requirePermission({ enrollment: ["read"] });
+  const result = await apiCall((api) => api["enrollment.people"]({ classId }));
+  return Result.isSuccess(result) ? result.success : { teachers: [], classmates: [] };
+}
+
 export async function isFirstJoin() {
   const { student } = await me({ enrollment: ["read"] });
   return student === null || !student.studentNumber || !student.sex;
@@ -110,6 +182,13 @@ export async function isFirstJoin() {
 export async function joinClass(code: string, sex: Sex | null, studentNumber: string | null) {
   await requirePermission({ enrollment: ["create"] });
   return messageOf(await apiCall((api) => api["enrollment.join"]({ code, sex, studentNumber })));
+}
+
+// What a class code opens, so the student can confirm before joining.
+export async function previewClass(code: string) {
+  await requirePermission({ enrollment: ["create"] });
+  const result = await apiCall((api) => api["enrollment.preview"]({ code }));
+  return Result.isSuccess(result) ? ({ ok: result.success } as const) : ({ error: result.failure.message } as const);
 }
 
 export async function leaveClass(classId: string) {

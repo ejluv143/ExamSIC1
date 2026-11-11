@@ -4,16 +4,18 @@ import { Conflict, NotFound } from "@examinus/contract/errors";
 import { type Incident } from "@examinus/contract/live";
 import { type AttemptDetail, type ClassSessionScores } from "@examinus/contract/session";
 import { type AttemptStatus } from "@examinus/domain/quiz";
-import { attemptScore, questionScore } from "@examinus/domain/scoring";
-import { orderForAttempt, quizTotals } from "@examinus/domain/shuffle";
+import { resultsVisible } from "@examinus/domain/release";
+import { latestSubmitted, finalScore } from "@examinus/domain/results";
+import { questionScore } from "@examinus/domain/scoring";
 import { Context, Effect, Layer } from "effect";
+import { groupBy } from "../../platform/group.ts";
 import { type Actor } from "../auth/Session.ts";
-import { flatQuestions } from "../attempt/rules.ts";
+import { paperOf, statusAfterScoring } from "../attempt/paper.ts";
 import { toIncident } from "../live/rules.ts";
+import { QuizRepo } from "../quiz/Repo.ts";
 import { toQuestion } from "../quiz/mappers.ts";
-import { toSession } from "./mappers.ts";
+import { toRecordSession, toSession } from "./mappers.ts";
 import { SessionRepo } from "./Repo.ts";
-import { resultsVisible } from "./rules.ts";
 
 export class SessionReports extends Context.Service<
   SessionReports,
@@ -39,6 +41,7 @@ export class SessionReports extends Context.Service<
     SessionReports,
     Effect.gen(function* () {
       const repo = yield* SessionRepo;
+      const quizRepo = yield* QuizRepo;
 
       const attempts = Effect.fn("SessionReports.attempts")(function* (actor: Actor, sessionId: string) {
         const { quiz } = yield* repo.ownSession(sessionId, actor);
@@ -55,34 +58,27 @@ export class SessionReports extends Context.Service<
       const classScores = Effect.fn("SessionReports.classScores")(function* (actor: Actor, classId: string) {
         const now = Date.now();
         const { rows, parts, done, answerRows } = yield* repo.classScoreData(actor, classId);
+        // Grouped once, so each student's score reads its own answers instead of scanning every answer in the class.
+        const doneOf = groupBy(done, (x) => x.attempt.sessionId);
+        const answersOf = groupBy(answerRows, (a) => a.attemptId);
         return rows.map(({ session, quiz }): ClassSessionScores => {
           const paperParts = parts.get(quiz.id) ?? [];
-          const s = toSession(session, now);
+          const { session: s, record } = toRecordSession(session, quiz, paperParts, now);
           // Each student's latest submitted attempt.
-          const latest = new Map<string, (typeof done)[number]>();
-          for (const x of done) {
-            if (x.attempt.sessionId !== session.id || !x.rosterId) continue;
-            const prev = latest.get(x.rosterId);
-            if (!prev || prev.attempt.submittedAt! < x.attempt.submittedAt!) latest.set(x.rosterId, x);
-          }
+          const latest = latestSubmitted(
+            doneOf.get(session.id) ?? [],
+            (x) => x.rosterId,
+            (x) => x.attempt,
+          );
           return {
-            sessionId: session.id,
-            quizId: quiz.id,
-            title: quiz.title,
-            mode: session.mode,
-            period: quiz.header.period,
+            ...record,
             status: s.status,
-            maxScore: quizTotals(paperParts).totalPoints,
-            opensAt: s.opensAt,
-            closesAt: s.closesAt,
             endedAt: s.endedAt,
-            countInRecord: session.countInRecord,
             scores: [...latest].map(([studentId, { attempt }]) => {
-              const paper = flatQuestions(orderForAttempt(quiz.settings, paperParts, attempt.seed));
-              const score = attemptScore(paper, new Map(answerRows.filter((a) => a.attemptId === attempt.id).map((a) => [a.questionId, a])));
+              const score = paperOf({ quiz, parts: paperParts }, attempt.seed).score(answersOf.get(attempt.id) ?? []);
               return {
                 studentId,
-                score: score.ungraded > 0 ? null : score.score,
+                score: finalScore(score),
                 submittedAt: attempt.submittedAt!.toISOString(),
               };
             }),
@@ -107,14 +103,20 @@ export class SessionReports extends Context.Service<
         const changed = oldScore !== newScore;
         if (released && changed && (reason ?? "").trim() === "")
           return yield* new Conflict({ message: "The results are released. Give the reason for changing this score." });
-        return yield* repo.saveGrade({
-          attempt,
-          quiz,
+        yield* repo.saveGrade({
+          attemptId,
           questionId,
           manualScore: score,
           feedback: feedback === null || feedback.trim() === "" ? null : feedback,
           change: released && changed ? { changedBy: actor.id, oldScore, newScore, reason: reason!.trim() } : null,
         });
+        if (attempt.status === "in_progress") return { status: attempt.status };
+        // A submitted attempt is graded once nothing is left waiting for the teacher, and goes back to needing it when
+        // a score is cleared.
+        const detail = yield* quizRepo.detail(quiz);
+        const status = statusAfterScoring(paperOf(detail, attempt.seed).score(yield* repo.answersOfAttempt(attemptId)));
+        yield* repo.updateAttempt(attemptId, { status });
+        return { status };
       });
 
       return SessionReports.of({ attempts, liveAttempt, classScores, grade });

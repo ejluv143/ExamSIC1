@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ClassFields } from "@examinus/domain/classes";
+import type { ClassFields, PostFields } from "@examinus/domain/classes";
 import { Effect, Layer } from "effect";
 import { harness } from "../../testing/config.ts";
 import { classItem, fakeClassRepo, studentItem, type ClassWorld } from "./fixtures.ts";
@@ -34,6 +34,7 @@ const fields: ClassFields = {
   courseCode: "  CS 2  ",
   title: " Algorithms ",
   subjectArea: null,
+  color: null,
   section: " B ",
   term: "",
   schedule: " MWF ",
@@ -148,7 +149,7 @@ describe("ClassService", () => {
       }),
     );
     expect(members.map((m) => `${m.classId}/${m.studentId}`)).toEqual(["c1/s2", "c3/s1"]);
-    expect(sessionChanges).toEqual(["leave c1 u1"]);
+    expect(sessionChanges).toEqual(["left c1 s1"]);
 
     const err = await fail(
       Effect.gen(function* () {
@@ -156,13 +157,12 @@ describe("ClassService", () => {
       }),
     );
     expect(err._tag).toBe("NotFound");
-    // A roster entry without an account (imported from Classroom) has no sessions to leave.
     await run(
       Effect.gen(function* () {
         yield* (yield* ClassService).removeStudent(actor("t1"), "c1", "s2");
       }),
     );
-    expect(sessionChanges).toEqual(["leave c1 u1"]);
+    expect(sessionChanges).toEqual(["left c1 s1", "left c1 s2"]);
   });
 
   test("membership is null for a student outside the class and for an archived class", async () => {
@@ -178,5 +178,76 @@ describe("ClassService", () => {
       }),
     );
     expect(result).toEqual(["s1", null, null]);
+  });
+});
+
+describe("ClassService announcements", () => {
+  const post: PostFields = { kind: "assignment", title: " Quiz 1 ", body: " Read chapter 2 ", dueAt: null, attachments: [] };
+
+  test("a teacher edits their own post: text, title and attachments change, the kind stays", async () => {
+    const { run, posts } = setup(world);
+    const edited = await run(
+      Effect.gen(function* () {
+        const service = yield* ClassService;
+        const created = yield* service.postAnnouncement(actor("t1"), "c1", post);
+        return yield* service.updateAnnouncement(actor("t1"), "c1", created.id, {
+          ...post,
+          title: "Quiz 2",
+          body: "Read chapter 3",
+          attachments: [{ kind: "link", url: "https://example.com/ch3", title: "" }],
+        });
+      }),
+    );
+    expect(posts).toHaveLength(1);
+    expect(edited).toMatchObject({ kind: "assignment", title: "Quiz 2", body: "Read chapter 3" });
+    expect(edited.attachments).toEqual([{ kind: "link", url: "https://example.com/ch3", title: "example.com" }]);
+  });
+
+  test("another teacher's class, a missing post, a different kind or a bad attachment is refused and nothing changes", async () => {
+    const { run, fail, posts } = setup(world);
+    const created = await run(Effect.flatMap(ClassService, (s) => s.postAnnouncement(actor("t1"), "c1", post)));
+    const before = JSON.stringify(posts);
+    const attempts = [
+      (s: ClassService["Service"]) => s.updateAnnouncement(actor("t2"), "c1", created.id, post),
+      (s: ClassService["Service"]) => s.updateAnnouncement(actor("t1"), "c1", "an-missing", post),
+      (s: ClassService["Service"]) => s.updateAnnouncement(actor("t1"), "c1", created.id, { ...post, kind: "announcement", body: "x" }),
+      (s: ClassService["Service"]) =>
+        s.updateAnnouncement(actor("t1"), "c1", created.id, { ...post, attachments: [{ kind: "youtube", url: "https://evil.example/", title: "" }] }),
+      (s: ClassService["Service"]) => s.updateAnnouncement(actor("t1"), "c1", created.id, { ...post, title: "  " }),
+    ];
+    for (const attempt of attempts) {
+      const err = await fail(Effect.flatMap(ClassService, attempt));
+      expect(err._tag).toBe("NotFound");
+    }
+    expect(JSON.stringify(posts)).toBe(before);
+  });
+
+  test("an assignment keeps its points, time limit and rubric (the rubric's total is its points); other posts drop them", async () => {
+    const { run, fail } = setup(world);
+    const assignment = {
+      ...post,
+      kind: "assignment" as const,
+      points: 50,
+      timeLimitMinutes: 45,
+      rubric: [
+        { criterion: " Clear explanation ", points: 6 },
+        { criterion: "   ", points: 99 },
+        { criterion: "Sources", points: 4 },
+      ],
+    };
+    const made = await run(Effect.flatMap(ClassService, (s) => s.postAnnouncement(actor("t1"), "c1", assignment)));
+    expect(made).toMatchObject({ points: 10, timeLimitMinutes: 45 });
+    expect(made.rubric).toEqual([
+      { criterion: "Clear explanation", points: 6 },
+      { criterion: "Sources", points: 4 },
+    ]);
+
+    const plain = await run(Effect.flatMap(ClassService, (s) => s.postAnnouncement(actor("t1"), "c1", { ...assignment, kind: "activity" })));
+    expect(plain).toMatchObject({ points: null, timeLimitMinutes: null, rubric: [] });
+
+    for (const bad of [{ points: -1 }, { points: 1.5 }, { points: 5000 }, { timeLimitMinutes: 0 }, { timeLimitMinutes: 601 }, { rubric: [{ criterion: "x", points: -2 }] }]) {
+      const err = await fail(Effect.flatMap(ClassService, (s) => s.postAnnouncement(actor("t1"), "c1", { ...post, kind: "assignment", ...bad })));
+      expect(err._tag).toBe("NotFound");
+    }
   });
 });

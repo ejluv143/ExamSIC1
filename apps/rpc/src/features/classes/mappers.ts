@@ -1,5 +1,7 @@
-import type { ClassFields } from "@examinus/domain/classes";
-import type { ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import { classColors, type ClassColor, type ClassFields } from "@examinus/domain/classes";
+import type { AnnouncementItem, ClassItem, ResourceItem, StudentItem } from "../../database/schemas/index.ts";
+
+const classColorOf = (value: string | null): ClassColor | null => (value && value in classColors ? (value as ClassColor) : null);
 
 // The columns a teacher's class form sets, trimmed.
 export const classColumns = (fields: ClassFields) => ({
@@ -10,7 +12,9 @@ export const classColumns = (fields: ClassFields) => ({
   term: fields.term.trim(),
   schedule: fields.schedule.trim(),
   room: fields.room.trim(),
+  ...(fields.eroomUrl !== undefined && { eroomUrl: fields.eroomUrl.trim() }),
   units: fields.units,
+  ...(fields.color !== undefined && { color: fields.color }),
 });
 
 export const toClassInfo = (row: ClassItem, studentIds: string[]) => ({
@@ -22,7 +26,10 @@ export const toClassInfo = (row: ClassItem, studentIds: string[]) => ({
   term: row.term,
   schedule: row.schedule,
   room: row.room,
+  eroomUrl: row.eroomUrl,
   units: row.units,
+  color: classColorOf(row.color),
+  headerImage: row.headerImage,
   classroom: row.classroom ?? null,
   studentIds,
 });
@@ -39,4 +46,27 @@ export const toRosterStudent = ({ id, studentNumber, firstName, lastName, email,
   lastName,
   email,
   sex,
+});
+
+export const toAnnouncement = ({ id, kind, title, body, dueAt, attachments, points, timeLimitMinutes, rubric, createdAt, authorId, authorName }: AnnouncementItem & { authorName?: string }) => ({
+  id,
+  kind: (kind === "assignment" || kind === "activity" ? kind : "announcement") as "announcement" | "assignment" | "activity",
+  title,
+  body,
+  dueAt: dueAt ? dueAt.toISOString() : null,
+  attachments,
+  authorId,
+  authorName: authorName ?? "",
+  points,
+  timeLimitMinutes,
+  rubric,
+  createdAt: createdAt.toISOString(),
+});
+
+export const toResource = ({ id, kind, url, title, detail }: ResourceItem) => ({
+  id,
+  kind: (kind === "youtube" || kind === "drive" || kind === "file" ? kind : "link") as "link" | "youtube" | "drive" | "file",
+  url,
+  title,
+  detail,
 });

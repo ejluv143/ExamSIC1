@@ -4,7 +4,7 @@
 // so keep it on a private network and never expose it to students directly.
 import { spawn } from "node:child_process";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -31,6 +31,16 @@ const IMAGE = process.env.RUNNER_IMAGE ?? "examinus-sandbox:1";
 const concurrencySetting = (process.env.RUNNER_CONCURRENCY ?? "2").trim();
 const CONCURRENCY = /^\d+$/.test(concurrencySetting) ? Number(concurrencySetting) : 0;
 
+// Which runner this is. Containers and work folders carry it, so a runner that starts up (or restarts after a crash)
+// cleans up only after itself and leaves other runners on the same Docker daemon and temp directory alone. Kept
+// across restarts: set RUNNER_INSTANCE, or it is derived from PORT (two runners on one host need different ports).
+const INSTANCE = (process.env.RUNNER_INSTANCE?.trim() || `port-${PORT}`);
+const WORK_ROOT = path.join(tmpdir(), `examinus-runner-${INSTANCE}`);
+
+if (!/^[A-Za-z0-9_.-]{1,40}$/.test(INSTANCE)) {
+  console.error(`RUNNER_INSTANCE must be 1 to 40 letters, digits, "-", "_" or "." (got "${INSTANCE}"). See .env.example.`);
+  process.exit(1);
+}
 if (SECRET.length < 16) {
   console.error("Set RUNNER_SECRET (16+ characters) in apps/runner/.env. See .env.example.");
   process.exit(1);
@@ -60,18 +70,33 @@ const limits = {
   maxStdout: 4 * 1024 * 1024,
 };
 
-// --- a small queue so only CONCURRENCY containers run at once ---
+// --- two small queues so only CONCURRENCY containers run at once ---
+// "sample" runs are a student pressing Run samples and waiting for the answer; "graded" submits are the API
+// grading in the background. Samples go first, so one student's Run never waits behind a whole class's submits, but
+// after SAMPLE_STREAK samples in a row the next free slot goes to a graded submit, so grading is never starved.
+const SAMPLE_STREAK = 4;
 let running = 0;
-/** @type {(() => void)[]} */
-const waiting = [];
-async function withSlot(/** @type {() => Promise<any>} */ job) {
-  if (running >= CONCURRENCY) await new Promise((resolve) => waiting.push(() => resolve(undefined)));
-  running++;
+let samplesInARow = 0;
+/** @type {{ sample: (() => void)[], graded: (() => void)[] }} */
+const waiting = { sample: [], graded: [] };
+const queued = () => waiting.sample.length + waiting.graded.length;
+/** The next waiter to get a free slot, or undefined when nobody waits. */
+function nextWaiting() {
+  const graded = samplesInARow >= SAMPLE_STREAK || waiting.sample.length === 0;
+  const next = graded ? waiting.graded.shift() : waiting.sample.shift();
+  if (next) samplesInARow = graded ? 0 : samplesInARow + 1;
+  return next;
+}
+async function withSlot(/** @type {"sample" | "graded"} */ priority, /** @type {() => Promise<any>} */ job) {
+  // A waiter is handed the slot of the job that just finished (running stays the same), so a newcomer can't slip in between.
+  if (running >= CONCURRENCY) await new Promise((resolve) => waiting[priority].push(() => resolve(undefined)));
+  else running++;
   try {
     return await job();
   } finally {
-    running--;
-    waiting.shift()?.();
+    const next = nextWaiting();
+    if (next) next();
+    else running--;
   }
 }
 
@@ -111,6 +136,8 @@ function runContainer(
   const args = [
     // -i: the test inputs go in on stdin, so they're never in /work where students' code could read them (issue #19).
     "run", "--rm", "-i", "--name", name,
+    // Which runner started it: startup cleanup removes only its own (issue #72).
+    "--label", `examinus.runner=${INSTANCE}`,
     "--network", "none",
     "--memory", "512m", "--memory-swap", "512m",
     "--cpus", "1",
@@ -201,15 +228,19 @@ function parse(/** @type {string} */ stdout) {
   return { tests };
 }
 
-async function run(/** @type {{ language: string, code: string, tests: { id: string, input: string }[], database?: string }} */ job) {
-  const workDir = await mkdtemp(path.join(tmpdir(), "examinus-run-"));
+async function run(/** @type {{ language: string, code: string, tests: { id: string, input: string }[], database?: string, priority?: "sample" | "graded" }} */ job) {
+  // One folder per runner instance, so another runner's cleanup never reaches these (issue #72). The sandbox user must
+  // be able to walk through it.
+  await mkdir(WORK_ROOT, { recursive: true, mode: 0o755 });
+  await chmod(WORK_ROOT, 0o755);
+  const workDir = await mkdtemp(path.join(WORK_ROOT, "run-"));
   try {
     await writeFile(path.join(workDir, sourceFile[/** @type {keyof typeof sourceFile} */ (job.language)]), job.code);
     if (job.database) await writeFile(path.join(workDir, "database.sql"), job.database);
     // The sandbox user (nobody) must be able to read it all.
     await chmod(workDir, 0o755);
 
-    const { out, killed } = await withSlot(() =>
+    const { out, killed } = await withSlot(job.priority === "sample" ? "sample" : "graded", () =>
       telemetry.traceContainer(() => runContainer(workDir, job.language, job.tests.map((t) => t.input), Boolean(job.database))),
     );
     const tooLong = "The run took too long and was stopped.";
@@ -244,6 +275,7 @@ function invalid(/** @type {any} */ job) {
   if (typeof job.code !== "string" || job.code.length > limits.maxCode) return "Code missing or too long.";
   if (job.database !== undefined && (typeof job.database !== "string" || job.database.length > limits.maxDatabase))
     return "Database setup must be a string under 256 KB.";
+  if (job.priority !== undefined && job.priority !== "sample" && job.priority !== "graded") return "Priority is sample or graded.";
   if (!Array.isArray(job.tests) || job.tests.length === 0 || job.tests.length > limits.maxTests) return "1–30 tests.";
   for (const t of job.tests)
     if (typeof t?.id !== "string" || typeof t?.input !== "string" || t.input.length > limits.maxInput)
@@ -262,24 +294,24 @@ const send = (/** @type {import("node:http").ServerResponse} */ res, /** @type {
   res.end(JSON.stringify(body));
 };
 
-// After a crash, containers and temp directories from the last run are left behind. This assumes one runner per
-// Docker daemon and temp directory.
+// After a crash, this runner's containers and work folders from the last run are left behind. Only this instance's
+// (its label, its folder): another runner on the same Docker daemon and temp directory keeps its running jobs.
 async function removeLeftovers() {
-  const { code, out } = await docker(["ps", "-a", "--filter", "name=examinus-run-", "--format", "{{.Names}}"]);
+  const { code, out } = await docker(["ps", "-a", "--filter", `label=examinus.runner=${INSTANCE}`, "--format", "{{.Names}}"]);
   const names = out.split("\n").filter((n) => n.startsWith("examinus-run-"));
   if (code !== 0) console.error("Couldn't list leftover containers: is Docker running?");
   else if (names.length) {
     await docker(["rm", "-f", ...names]);
     console.log(`Removed ${names.length} leftover container(s).`);
   }
-  const dirs = (await readdir(tmpdir())).filter((d) => d.startsWith("examinus-run-"));
-  await Promise.all(dirs.map((d) => rm(path.join(tmpdir(), d), { recursive: true, force: true })));
+  const dirs = await readdir(WORK_ROOT).catch(() => /** @type {string[]} */ ([]));
+  await Promise.all(dirs.map((d) => rm(path.join(WORK_ROOT, d), { recursive: true, force: true })));
   if (dirs.length) console.log(`Removed ${dirs.length} leftover temp director${dirs.length === 1 ? "y" : "ies"}.`);
 }
 await removeLeftovers();
 
 const server = createServer(async (/** @type {import("node:http").IncomingMessage} */ req, /** @type {import("node:http").ServerResponse} */ res) => {
-  if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, image: IMAGE, running, waiting: waiting.length });
+  if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, image: IMAGE, running, waiting: queued(), waitingSamples: waiting.sample.length, waitingGraded: waiting.graded.length });
   if (req.method !== "POST" || req.url !== "/run") return send(res, 404, { error: "Not found" });
   if (!authorized(req.headers.authorization)) return send(res, 401, { error: "Unauthorized" });
 
@@ -312,7 +344,7 @@ const server = createServer(async (/** @type {import("node:http").IncomingMessag
     send(res, 500, { error: "The runner failed." });
   }
 });
-server.listen(PORT, "127.0.0.1", () => console.log(`Examinus runner on http://127.0.0.1:${PORT} (image ${IMAGE}, ${CONCURRENCY} at a time)`));
+server.listen(PORT, "127.0.0.1", () => console.log(`Examinus runner on http://127.0.0.1:${PORT} (instance ${INSTANCE}, image ${IMAGE}, ${CONCURRENCY} at a time)`));
 
 // Stop taking requests and flush pending telemetry before exiting.
 for (const signal of ["SIGTERM", "SIGINT"]) {

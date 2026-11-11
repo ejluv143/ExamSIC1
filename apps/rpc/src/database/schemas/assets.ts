@@ -25,6 +25,8 @@ export const assets = pgTable(
     purpose: assetPurpose("purpose").notNull(),
     s3Key: text("s3_key").notNull().unique(),
     mime: text("mime").notNull(),
+    // What a `post` file is downloaded as; null for images.
+    fileName: text("file_name"),
     // Known once the upload is confirmed.
     sizeBytes: integer("size_bytes"),
     width: integer("width"),

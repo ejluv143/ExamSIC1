@@ -14,8 +14,10 @@ import { EnrollmentRpcs } from "./enrollment.ts";
 import { GameRpcs } from "./game.ts";
 import { LiveTicketRpcs } from "./live.ts";
 import { OrganizationRpcs } from "./organization.ts";
+import { ProfileRpcs } from "./profile.ts";
 import { QuizRpcs } from "./quiz.ts";
 import { SessionRpcs } from "./session.ts";
+import { WorkRpcs } from "./work.ts";
 
 export class ApiRpcs extends AuthRpcs.merge(
   AdminRpcs,
@@ -35,6 +37,8 @@ export class ApiRpcs extends AuthRpcs.merge(
   GameRpcs,
   AiRpcs,
   AvatarRpcs,
+  ProfileRpcs,
+  WorkRpcs,
 ) {}
 
 // Served by the API at this path.

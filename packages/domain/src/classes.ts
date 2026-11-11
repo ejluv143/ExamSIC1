@@ -1,8 +1,24 @@
 import { Schema } from "effect";
+import { assetIdOfRef, assetIdsIn, assetRef, cleanFileName, fileMimeOf } from "./asset.ts";
 import { sexNames, subjectAreaNames } from "./roles.ts";
 
 export const SubjectAreaSchema = Schema.Literals(subjectAreaNames);
 export const SexSchema = Schema.Literals(sexNames);
+
+// The colour a teacher gives a class: its banner, and its tile in the lists. Null: the theme's own colour.
+export const classColors = {
+  blue: { label: "Blue", from: "#2563eb", to: "#1e40af" },
+  teal: { label: "Teal", from: "#0d9488", to: "#115e59" },
+  green: { label: "Green", from: "#16a34a", to: "#166534" },
+  orange: { label: "Orange", from: "#ea580c", to: "#9a3412" },
+  red: { label: "Red", from: "#dc2626", to: "#991b1b" },
+  pink: { label: "Pink", from: "#db2777", to: "#9d174d" },
+  purple: { label: "Purple", from: "#7c3aed", to: "#5b21b6" },
+  slate: { label: "Slate", from: "#475569", to: "#1e293b" },
+} as const;
+export const classColorNames = Object.keys(classColors) as [ClassColor, ...ClassColor[]];
+export type ClassColor = keyof typeof classColors;
+export const ClassColorSchema = Schema.Literals(["blue", "teal", "green", "orange", "red", "pink", "purple", "slate"]);
 
 // The Google Classroom course a class mirrors.
 export const ClassroomLink = Schema.Struct({ courseId: Schema.String, link: Schema.String, lastSyncedAt: Schema.String });
@@ -17,7 +33,11 @@ export const ClassInfo = Schema.Struct({
   term: Schema.String,
   schedule: Schema.String,
   room: Schema.String,
+  // The class's online room (a Meet, Zoom or Teams link), or "" when it has none.
+  eroomUrl: Schema.String,
   units: Schema.Number,
+  color: Schema.NullOr(ClassColorSchema),
+  headerImage: Schema.NullOr(Schema.String),
   classroom: Schema.NullOr(ClassroomLink),
   // Roster entries (RosterStudent ids).
   studentIds: Schema.Array(Schema.String),
@@ -31,6 +51,13 @@ export type TeacherClass = typeof TeacherClass.Type;
 const Text = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 const Required = (max: number) => Schema.NonEmptyString.check(Schema.isMaxLength(max));
 
+// What "Customize" on the class banner sets.
+export const ClassAppearance = Schema.Struct({
+  color: Schema.NullOr(ClassColorSchema),
+  headerImage: Schema.NullOr(Schema.String),
+});
+export type ClassAppearance = typeof ClassAppearance.Type;
+
 // What a teacher fills in to create or edit a class.
 export const ClassFields = Schema.Struct({
   courseCode: Required(40),
@@ -40,7 +67,11 @@ export const ClassFields = Schema.Struct({
   term: Text(60),
   schedule: Text(80),
   room: Text(60),
+  // Left out by clients that don't set it (kept when editing); "" removes it.
+  eroomUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(300), Schema.isPattern(/^(https?:\/\/\S+)?$/))),
   units: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 12 })),
+  // Left out by clients that don't set one (the colour is kept when editing, and starts as the theme's).
+  color: Schema.optionalKey(Schema.NullOr(ClassColorSchema)),
 });
 export type ClassFields = typeof ClassFields.Type;
 
@@ -55,3 +86,119 @@ export const RosterStudent = Schema.Struct({
   sex: Schema.NullOr(SexSchema),
 });
 export type RosterStudent = typeof RosterStudent.Type;
+
+// A post a teacher makes to a class's stream.
+export const PostKind = Schema.Literals(["announcement", "assignment", "activity"]);
+export type PostKind = typeof PostKind.Type;
+
+// Something a post points to: a web page, a YouTube video or a Google Drive file, each by its address, or a file
+// the teacher uploaded (its `url` is then `asset:<id>` and its `title` the file's name).
+export const attachmentKinds = ["link", "youtube", "drive", "file"] as const;
+export const Attachment = Schema.Struct({
+  kind: Schema.Literals(attachmentKinds),
+  url: Schema.String,
+  title: Schema.String,
+});
+export type Attachment = typeof Attachment.Type;
+export const maxAttachments = 10;
+
+const hostIs = (host: string, ...names: string[]) => names.some((n) => host === n || host.endsWith(`.${n}`));
+
+// A clean attachment from what a teacher typed, or null when its address isn't an http(s) page of the right
+// site (a YouTube link must be on youtube.com or youtu.be, a Drive one on drive.google.com or docs.google.com).
+export function cleanAttachment(kind: Attachment["kind"], rawUrl: string, rawTitle = ""): Attachment | null {
+  if (kind === "file") {
+    const id = assetIdOfRef(rawUrl.trim());
+    const title = cleanFileName(rawTitle);
+    return id && assetIdsIn(id)[0] === id && fileMimeOf(title) ? { kind, url: assetRef(id), title } : null;
+  }
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.username || url.password) return null;
+  const host = url.hostname.toLowerCase();
+  if (kind === "youtube" && !hostIs(host, "youtube.com", "youtu.be")) return null;
+  if (kind === "drive" && !hostIs(host, "drive.google.com", "docs.google.com")) return null;
+  return { kind, url: url.toString(), title: rawTitle.trim().slice(0, 150) || url.hostname.replace(/^www\./, "") };
+}
+
+// One row of an assignment's rubric: what is judged and how many points it is worth.
+export const RubricRow = Schema.Struct({ criterion: Schema.String, points: Schema.Int });
+export type RubricRow = typeof RubricRow.Type;
+export const maxRubricRows = 20;
+export const maxPostPoints = 1000;
+export const maxTimeLimitMinutes = 600;
+
+export const Announcement = Schema.Struct({
+  id: Schema.String,
+  kind: PostKind,
+  // Assignments and activities have one; an announcement doesn't ("").
+  title: Schema.String,
+  body: Schema.String,
+  // When an assignment or activity is due (ISO), if it has a deadline.
+  dueAt: Schema.NullOr(Schema.String),
+  attachments: Schema.Array(Attachment),
+  // Who posted it: the account id and display name ("" when unknown).
+  authorId: Schema.String,
+  authorName: Schema.String,
+  // Assignments only: what it is worth (the rubric's total when it has one), how long students get once they
+  // start (minutes), and the rubric.
+  points: Schema.NullOr(Schema.Int),
+  timeLimitMinutes: Schema.NullOr(Schema.Int),
+  rubric: Schema.Array(RubricRow),
+  createdAt: Schema.String,
+});
+export type Announcement = typeof Announcement.Type;
+
+export const AnnouncementBody = Schema.String.check(Schema.isMaxLength(5000));
+export const PostTitle = Schema.String.check(Schema.isMaxLength(150));
+
+// What a teacher fills in to post to the stream: an announcement needs text, an assignment or activity a title.
+export const PostFields = Schema.Struct({
+  kind: PostKind,
+  title: PostTitle,
+  body: AnnouncementBody,
+  dueAt: Schema.NullOr(Schema.String),
+  attachments: Schema.Array(Attachment),
+  // Left out by clients that don't set them; only an assignment keeps them.
+  points: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  timeLimitMinutes: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  rubric: Schema.optionalKey(Schema.Array(RubricRow)),
+});
+export type PostFields = typeof PostFields.Type;
+
+// Class Resources: the shelf a teacher keeps for a class (a textbook link, the syllabus, the lab rules). Each is an
+// address, a title and one short line under it. `kind` picks its icon; a "file" is a PDF, Word, Excel or PowerPoint
+// document the teacher uploaded (its `url` is then `asset:<id>`), the others are links checked like an attachment's
+// (a YouTube link must be on YouTube, a Drive one on Google Drive).
+export const resourceKinds = ["link", "youtube", "drive", "file"] as const;
+export const maxResources = 30;
+export const ClassResource = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(resourceKinds),
+  url: Schema.String,
+  title: Schema.String,
+  detail: Schema.String,
+});
+export type ClassResource = typeof ClassResource.Type;
+
+export const ResourceFields = Schema.Struct({
+  kind: Schema.Literals(resourceKinds),
+  url: Schema.String.check(Schema.isMaxLength(500)),
+  title: Schema.String.check(Schema.isMaxLength(150)),
+  detail: Schema.String.check(Schema.isMaxLength(150)),
+});
+export type ResourceFields = typeof ResourceFields.Type;
+
+// The address to keep for a resource, or null when it isn't valid for its kind.
+export function cleanResourceUrl(kind: ResourceFields["kind"], rawUrl: string): string | null {
+  if (kind === "file") {
+    const id = assetIdOfRef(rawUrl.trim());
+    return id && assetIdsIn(id)[0] === id ? assetRef(id) : null;
+  }
+  return cleanAttachment(kind, rawUrl)?.url ?? null;
+}

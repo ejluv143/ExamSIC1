@@ -2,7 +2,6 @@
 import { NotFound } from "@examinus/contract/errors";
 import { QuizInUse, type QuizDetail, type QuizDraft, type QuizListItem } from "@examinus/contract/quiz";
 import { changesGrading, quizInUseMessage } from "@examinus/domain/quiz-lock";
-import { quizTotals } from "@examinus/domain/shuffle";
 import { Context, Effect, Layer } from "effect";
 import type { Actor } from "../auth/Session.ts";
 import { toSession } from "../session/mappers.ts";
@@ -40,9 +39,9 @@ export class QuizService extends Context.Service<
         list: Effect.fn("QuizService.list")(function* (actor) {
           const now = Date.now();
           const rows = yield* repo.listOwned(actor);
-          return rows.map(({ quiz, parts, sessions }) => ({
+          return rows.map(({ quiz, totals, sessions }) => ({
             quiz: toQuiz(quiz),
-            ...quizTotals(parts),
+            ...totals,
             sessions: sessions.map((s) => toSession(s, now)),
           }));
         }),

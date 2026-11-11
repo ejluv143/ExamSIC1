@@ -1,17 +1,57 @@
 // A teacher's classes: who owns one, its roster, and the teacher's changes to both.
 import { NotFound } from "@examinus/contract/errors";
-import { type ClassFields } from "@examinus/domain/classes";
+import { assetIdsIn } from "@examinus/domain/asset";
+import { cleanAttachment, cleanResourceUrl, maxAttachments, maxResources, maxPostPoints, maxRubricRows, maxTimeLimitMinutes, type ClassAppearance, type ClassFields, type PostFields, type ResourceFields } from "@examinus/domain/classes";
 import { Context, Effect, Layer } from "effect";
 import { newId } from "../../platform/ids.ts";
 import type { Actor } from "../auth/Session.ts";
-import type { ClassItem, StudentItem } from "../../database/schemas/index.ts";
+import type { AnnouncementItem, ClassItem, ResourceItem, StudentItem } from "../../database/schemas/index.ts";
 import { classColumns } from "./mappers.ts";
 import { ClassRepo } from "./Repo.ts";
+import { ClassRoster } from "./Roster.ts";
 import { newJoinCode } from "./rules.ts";
 
 const noSuchClass = () => new NotFound({ message: "That class doesn't exist or isn't yours." });
 
 export type ClassWithRoster = { row: ClassItem; studentIds: string[] };
+
+// What a post is made of once it is checked: an announcement needs text, an assignment or activity a title, a
+// deadline only goes with the latter two, and each attachment's address is checked again here (one that isn't
+// valid is refused, not dropped).
+export const postValues = Effect.fn("ClassService.postValues")(function* (post: PostFields) {
+  const body = post.body.trim();
+  const title = post.kind === "announcement" ? "" : post.title.trim();
+  if (post.kind === "announcement" ? !body : !title)
+    return yield* new NotFound({ message: post.kind === "announcement" ? "Write something to announce." : "Give it a title." });
+  const attachments = post.attachments.slice(0, maxAttachments).map((a) => cleanAttachment(a.kind, a.url, a.title));
+  if (attachments.includes(null)) return yield* new NotFound({ message: "One of the attachments has an address that isn't valid." });
+  const due = post.kind === "announcement" || !post.dueAt ? null : new Date(post.dueAt);
+  // Points, a time limit and a rubric only go with an assignment. A rubric's total is the assignment's points.
+  const assignment = post.kind === "assignment";
+  const rubric = (assignment ? (post.rubric ?? []) : [])
+    .slice(0, maxRubricRows)
+    .map((row) => ({ criterion: row.criterion.trim().slice(0, 200), points: row.points }))
+    .filter((row) => row.criterion !== "");
+  const whole = (n: number, max: number, min = 0) => Number.isInteger(n) && n >= min && n <= max;
+  if (rubric.some((row) => !whole(row.points, maxPostPoints)))
+    return yield* new NotFound({ message: `Each rubric row is worth a whole number of points from 0 to ${maxPostPoints}.` });
+  const given = assignment ? (post.points ?? null) : null;
+  if (given !== null && !whole(given, maxPostPoints)) return yield* new NotFound({ message: `Points are a whole number from 0 to ${maxPostPoints}.` });
+  const points = rubric.length > 0 ? rubric.reduce((sum, row) => sum + row.points, 0) : given;
+  if (points !== null && points > maxPostPoints) return yield* new NotFound({ message: `The rubric adds up to more than ${maxPostPoints} points.` });
+  const timeLimitMinutes = assignment ? (post.timeLimitMinutes ?? null) : null;
+  if (timeLimitMinutes !== null && !whole(timeLimitMinutes, maxTimeLimitMinutes, 1))
+    return yield* new NotFound({ message: `The time limit is a whole number of minutes from 1 to ${maxTimeLimitMinutes}.` });
+  return {
+    points,
+    timeLimitMinutes,
+    rubric,
+    title,
+    body,
+    dueAt: due && !Number.isNaN(due.getTime()) ? due : null,
+    attachments: attachments.filter((a) => a !== null),
+  };
+});
 
 export class ClassService extends Context.Service<
   ClassService,
@@ -27,10 +67,25 @@ export class ClassService extends Context.Service<
     // The class and roster entry of a student who belongs to it; null when they don't (or it is archived).
     readonly membership: (userId: string, classId: string) => Effect.Effect<{ cls: ClassItem; studentId: string } | null>;
     readonly list: (actor: Actor) => Effect.Effect<ClassWithRoster[]>;
+    // The class's announcements, newest first.
+    readonly announcements: (actor: Actor, classId: string) => Effect.Effect<(AnnouncementItem & { authorName: string })[], NotFound>;
+    readonly postAnnouncement: (actor: Actor, classId: string, post: PostFields) => Effect.Effect<AnnouncementItem, NotFound>;
+    readonly updateAnnouncement: (
+      actor: Actor,
+      classId: string,
+      announcementId: string,
+      post: PostFields,
+    ) => Effect.Effect<AnnouncementItem, NotFound>;
+    readonly deleteAnnouncement: (actor: Actor, classId: string, announcementId: string) => Effect.Effect<void, NotFound>;
+    // The class's Resources shelf, oldest first; adding checks the address, and a shelf holds `maxResources`.
+    readonly resources: (actor: Actor, classId: string) => Effect.Effect<ResourceItem[], NotFound>;
+    readonly addResource: (actor: Actor, classId: string, fields: ResourceFields) => Effect.Effect<ResourceItem, NotFound>;
+    readonly deleteResource: (actor: Actor, classId: string, resourceId: string) => Effect.Effect<void, NotFound>;
     // The teacher's class with its roster, or null when it isn't theirs (or is archived).
     readonly get: (actor: Actor, classId: string) => Effect.Effect<ClassWithRoster | null>;
     readonly create: (actor: Actor, fields: ClassFields) => Effect.Effect<{ id: string }>;
     readonly update: (actor: Actor, classId: string, fields: ClassFields) => Effect.Effect<void, NotFound>;
+    readonly customize: (actor: Actor, classId: string, appearance: ClassAppearance) => Effect.Effect<void, NotFound>;
     readonly archive: (actor: Actor, classId: string) => Effect.Effect<void, NotFound>;
     readonly newJoinCode: (actor: Actor, classId: string) => Effect.Effect<{ joinCode: string }, NotFound>;
     readonly removeStudent: (actor: Actor, classId: string, studentId: string) => Effect.Effect<void, NotFound>;
@@ -42,6 +97,7 @@ export class ClassService extends Context.Service<
     ClassService,
     Effect.gen(function* () {
       const repo = yield* ClassRepo;
+      const roster = yield* ClassRoster;
 
       const ownClass = Effect.fn("ClassService.ownClass")(function* (actor: Actor, classId: string) {
         const row = yield* repo.findOwn(actor, classId);
@@ -64,6 +120,53 @@ export class ClassService extends Context.Service<
         ownClasses: repo.ofTeacher,
         memberIds: repo.memberIds,
         membership: repo.membership,
+        announcements: Effect.fn("ClassService.announcements")(function* (actor, classId) {
+          yield* ownClass(actor, classId);
+          return yield* repo.announcements(classId);
+        }),
+        postAnnouncement: Effect.fn("ClassService.postAnnouncement")(function* (actor, classId, post) {
+          yield* ownClass(actor, classId);
+          const values = yield* postValues(post);
+          return yield* repo.insertAnnouncement({ id: newId("an"), classId, authorId: actor.id, kind: post.kind, ...values });
+        }),
+        updateAnnouncement: Effect.fn("ClassService.updateAnnouncement")(function* (actor, classId, announcementId, post) {
+          yield* ownClass(actor, classId);
+          const values = yield* postValues(post);
+          const updated = yield* repo.updateAnnouncement(classId, announcementId, post.kind, values);
+          if (!updated) return yield* new NotFound({ message: "That post doesn't exist." });
+          return updated;
+        }),
+        deleteAnnouncement: Effect.fn("ClassService.deleteAnnouncement")(function* (actor, classId, announcementId) {
+          yield* ownClass(actor, classId);
+          const removed = yield* repo.deleteAnnouncement(classId, announcementId);
+          if (!removed) return yield* new NotFound({ message: "That announcement doesn't exist." });
+        }),
+        resources: Effect.fn("ClassService.resources")(function* (actor, classId) {
+          yield* ownClass(actor, classId);
+          return yield* repo.resources(classId);
+        }),
+        addResource: Effect.fn("ClassService.addResource")(function* (actor, classId, fields) {
+          yield* ownClass(actor, classId);
+          const title = fields.title.trim();
+          if (!title) return yield* new NotFound({ message: "Give the resource a title." });
+          const url = cleanResourceUrl(fields.kind, fields.url);
+          if (!url) return yield* new NotFound({ message: fields.kind === "file" ? "That file isn't valid." : "That address isn't valid for this kind of resource." });
+          if ((yield* repo.resources(classId)).length >= maxResources)
+            return yield* new NotFound({ message: `A class can have up to ${maxResources} resources.` });
+          return yield* repo.insertResource({
+            id: newId("rs"),
+            classId,
+            kind: fields.kind,
+            url,
+            title,
+            detail: fields.detail.trim().slice(0, 150),
+          });
+        }),
+        deleteResource: Effect.fn("ClassService.deleteResource")(function* (actor, classId, resourceId) {
+          yield* ownClass(actor, classId);
+          const removed = yield* repo.deleteResource(classId, resourceId);
+          if (!removed) return yield* new NotFound({ message: "That resource doesn't exist." });
+        }),
         list: Effect.fn("ClassService.list")(function* (actor) {
           return yield* withRosters(yield* repo.ofTeacher(actor));
         }),
@@ -82,6 +185,13 @@ export class ClassService extends Context.Service<
           yield* ownClass(actor, classId);
           yield* repo.update(classId, classColumns(fields));
         }),
+        customize: Effect.fn("ClassService.customize")(function* (actor, classId, appearance) {
+          yield* ownClass(actor, classId);
+          const image = appearance.headerImage;
+          // Only an asset id is kept; what it may show is decided when its URL is asked for.
+          if (image !== null && assetIdsIn(image)[0] !== image) return yield* new NotFound({ message: "That picture isn't valid." });
+          yield* repo.update(classId, { color: appearance.color, headerImage: image });
+        }),
         archive: Effect.fn("ClassService.archive")(function* (actor, classId) {
           yield* ownClass(actor, classId);
           yield* repo.update(classId, { archivedAt: new Date() });
@@ -94,10 +204,8 @@ export class ClassService extends Context.Service<
         }),
         removeStudent: Effect.fn("ClassService.removeStudent")(function* (actor, classId, studentId) {
           yield* ownClass(actor, classId);
-          const removed = yield* repo.removeMember(classId, studentId);
+          const removed = yield* roster.left(classId, studentId);
           if (!removed) return yield* new NotFound({ message: "That student isn't in this class." });
-          const userId = yield* repo.accountOfStudent(studentId);
-          if (userId) yield* repo.leaveSessions(classId, userId);
         }),
         students: Effect.fn("ClassService.students")(function* (actor, studentIds) {
           if (studentIds.length === 0) return [];
