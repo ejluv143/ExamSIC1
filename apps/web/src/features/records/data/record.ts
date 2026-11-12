@@ -3,6 +3,7 @@
 // The record's shapes, grade math and how it is filled in live in `@examinus/domain/class-record`.
 import "server-only";
 import { Option, Schema } from "effect";
+import { allPages } from "@examinus/contract/page";
 import { requireTeacher } from "@/lib/auth/dal";
 import { ClassRecord as ClassRecordSchema } from "@examinus/contract/class-record";
 import { assignmentSession, blankRecord, courseResult, setDropped, teacherRecord, type ClassRecord, type ScoredSession } from "@examinus/domain/class-record";
@@ -15,7 +16,7 @@ import { getClass, getClasses, getStudents } from "@/features/classes/data";
 // points (graded scores, whether or not they are returned yet).
 async function classSessions(classId: string): Promise<readonly ScoredSession[]> {
   const [sessions, assignments] = await Promise.all([
-    read((api) => api["session.classScores"]({ classId })),
+    allPages((page) => read((api) => api["session.classScores"]({ classId, ...page }))).then((r) => r.items),
     read((api) => api["work.recordScores"]({ classId })),
   ]);
   return [...sessions, ...assignments.map((a) => ({ ...assignmentSession(a), scores: a.scores }))];

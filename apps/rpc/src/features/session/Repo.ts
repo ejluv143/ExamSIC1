@@ -5,8 +5,9 @@ import { type AttemptDetail } from "@examinus/contract/session";
 import { type Accommodations } from "@examinus/domain/accommodations";
 import { newJoinKey } from "@examinus/domain/join-key";
 import { type Answer, type CodeResults, type TypingEdits } from "@examinus/domain/quiz";
-import { and, count, desc, eq, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
+import { and, count, type AnyColumn, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
+import { type PageKey, pageOf } from "../../platform/cursor.ts";
 import { Database, type Db } from "../../platform/Database.ts";
 import { ownedClasses, ownedQuizzes, rosterBeside, rosterOf } from "../../platform/organization-scope.ts";
 import {
@@ -39,6 +40,16 @@ import { loadParts, loadQuizDetail } from "../quiz/Repo.ts";
 // The columns of a session row that can be written (everything but its identity).
 export type SessionColumns = Partial<typeof quizSessions.$inferInsert>;
 
+// A column's time at millisecond precision, which is what the API and its cursors carry (Postgres keeps microseconds).
+const msOf = (column: AnyColumn) => sql<Date>`date_trunc('milliseconds', ${column})`;
+
+// Rows after a cursor in the order (time, id): the keyset condition that pages without skipping or repeating a row.
+const afterKey = (time: SQL, id: AnyColumn, key: PageKey | null): SQL | undefined =>
+  key ? or(gt(time, sql`${key[0]}::timestamptz`), and(sql`${time} = ${key[0]}::timestamptz`, gt(id, key[1]))) : undefined;
+
+// What one page of a list needs: how many rows, and where it starts (null: the first page).
+export type PageQuery = { limit: number; after: PageKey | null };
+
 // Which attempts `attemptDetails` reads: one session's, or a single attempt.
 export type AttemptWhere = { sessionId: string } | { attemptId: string };
 
@@ -54,6 +65,8 @@ export type SessionListRow = {
 // What a class's score table is computed from.
 export type ClassScoreData = {
   rows: { session: QuizSessionItem; quiz: QuizItem }[];
+  // Where the next page of sessions starts (null: this was the last).
+  nextCursor: string | null;
   parts: Awaited<ReturnType<typeof loadParts>>;
   done: { attempt: AttemptItem; rosterId: string }[];
   answerRows: AnswerItem[];
@@ -63,14 +76,16 @@ const noSession = new NotFound({ message: "That session doesn't exist." });
 const noAttempt = new NotFound({ message: "That attempt doesn't exist." });
 
 // Every attempt matching `where` (of one quiz's session) as the teacher sees it.
-const attemptDetails = async (d: Db, quiz: QuizItem, where: SQL | undefined): Promise<AttemptDetail[]> => {
+const attemptDetails = async (d: Db, quiz: QuizItem, where: SQL | undefined, limit?: number): Promise<AttemptDetail[]> => {
   const detail = await loadQuizDetail(d, quiz);
-  const rows = await d
+  const query = d
     .select({ attempt: attempts, rosterId: students.id })
     .from(attempts)
     .innerJoin(students, and(eq(students.userId, attempts.studentId), rosterOf(quiz.organizationId)))
     .where(where)
-    .orderBy(attempts.startedAt);
+    .orderBy(msOf(attempts.startedAt), attempts.id)
+    .$dynamic();
+  const rows = await (limit === undefined ? query : query.limit(limit));
   const ids = rows.map((r) => r.attempt.id);
   if (ids.length === 0) return [];
   const answerRows = await d.select().from(answers).where(inArray(answers.attemptId, ids));
@@ -196,6 +211,12 @@ export class SessionRepo extends Context.Service<
     ) => Effect.Effect<{ openAttemptId: string | null } | null>;
     // The attempts matching `where` as the teacher sees them.
     readonly attemptDetails: (quiz: QuizItem, where: AttemptWhere) => Effect.Effect<AttemptDetail[]>;
+    // One page of a session's attempts, oldest start first; `status` keeps only the submitted or only the in-progress.
+    readonly attemptsPage: (
+      quiz: QuizItem,
+      sessionId: string,
+      page: PageQuery & { status?: "submitted" | "in_progress" | undefined },
+    ) => Effect.Effect<{ items: AttemptDetail[]; nextCursor: string | null }>;
     // The teacher-written incidents of one attempt, oldest first.
     readonly incidentsOf: (sessionId: string, attemptId: string) => Effect.Effect<IncidentItem[]>;
     // Writes columns of an attempt.
@@ -226,7 +247,7 @@ export class SessionRepo extends Context.Service<
       change: { changedBy: string; oldScore: number | null; newScore: number | null; reason: string } | null;
     }) => Effect.Effect<void>;
     // The sessions of a class (of this teacher's quizzes) with what their scores are computed from.
-    readonly classScoreData: (actor: Actor, classId: string) => Effect.Effect<ClassScoreData>;
+    readonly classScoreData: (actor: Actor, classId: string, page: PageQuery) => Effect.Effect<ClassScoreData>;
   }
 >()("examinus/api/SessionRepo") {
   static readonly layer = Layer.effect(
@@ -427,6 +448,22 @@ export class SessionRepo extends Context.Service<
             attemptDetails(d, quiz, "sessionId" in where ? eq(attempts.sessionId, where.sessionId) : eq(attempts.id, where.attemptId)),
           );
         }),
+        attemptsPage: Effect.fn("SessionRepo.attemptsPage")(function* (quiz, sessionId, { limit, after, status }) {
+          const rows = yield* db.query((d) =>
+            attemptDetails(
+              d,
+              quiz,
+              and(
+                eq(attempts.sessionId, sessionId),
+                status === undefined ? undefined : status === "submitted" ? ne(attempts.status, "in_progress") : eq(attempts.status, "in_progress"),
+                afterKey(msOf(attempts.startedAt), attempts.id, after),
+              ),
+              // One more than the page, to know whether there is a next one.
+              limit + 1,
+            ),
+          );
+          return pageOf(rows, limit, (r) => [r.attempt.startedAt, r.attempt.id]);
+        }),
         incidentsOf: Effect.fn("SessionRepo.incidentsOf")(function* (sessionId, attemptId) {
           return yield* db.query((d) =>
             d
@@ -500,15 +537,18 @@ export class SessionRepo extends Context.Service<
             }),
           );
         }),
-        classScoreData: Effect.fn("SessionRepo.classScoreData")(function* (actor, classId) {
+        classScoreData: Effect.fn("SessionRepo.classScoreData")(function* (actor, classId, { limit, after }) {
           return yield* db.query(async (d): Promise<ClassScoreData> => {
-            const rows = await d
+            const found = await d
               .select({ session: quizSessions, quiz: quizzes })
               .from(quizSessions)
               .innerJoin(quizzes, eq(quizSessions.quizId, quizzes.id))
-              .where(and(eq(quizSessions.classId, classId), ownedQuizzes(actor)))
-              .orderBy(quizSessions.createdAt);
-            if (rows.length === 0) return { rows, parts: new Map(), done: [], answerRows: [] };
+              .where(and(eq(quizSessions.classId, classId), ownedQuizzes(actor), afterKey(msOf(quizSessions.createdAt), quizSessions.id, after)))
+              .orderBy(msOf(quizSessions.createdAt), quizSessions.id)
+              // One more than the page, to know whether there is a next one.
+              .limit(limit + 1);
+            const { items: rows, nextCursor } = pageOf(found, limit, (r) => [r.session.createdAt.toISOString(), r.session.id]);
+            if (rows.length === 0) return { rows, nextCursor, parts: new Map(), done: [], answerRows: [] };
             const parts = await loadParts(d, [...new Set(rows.map((r) => r.quiz.id))]);
             const done = await d
               .select({ attempt: attempts, rosterId: students.id })
@@ -518,7 +558,7 @@ export class SessionRepo extends Context.Service<
             const answerRows = done.length
               ? await d.select().from(answers).where(inArray(answers.attemptId, done.map((x) => x.attempt.id)))
               : [];
-            return { rows, parts, done, answerRows };
+            return { rows, nextCursor, parts, done, answerRows };
           });
         }),
       });

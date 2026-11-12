@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { allPages } from "@examinus/contract/page";
 import type { QuizDetail } from "@examinus/contract/quiz";
 import type { AttemptDetail, SessionListItem, SessionSettingsFields, ExamRecord } from "@examinus/contract/session";
 import type { Question } from "@examinus/domain/question";
@@ -39,10 +40,27 @@ export const getSession = cache(async (sessionId: string) => {
   return readOrNull((api) => api["session.get"]({ sessionId }));
 });
 
-// Every attempt of a session, submitted or not, with answers, scores and what the integrity checks saw.
-export async function getAttempts(sessionId: string): Promise<readonly AttemptDetail[]> {
+// The attempts of a session for a page that works out something over all of them (results, integrity), read page by page:
+// the first `maxLoaded`, and `truncated` says there were more.
+export async function getAllAttempts(sessionId: string): Promise<{ attempts: readonly AttemptDetail[]; truncated: boolean }> {
   await requirePermission({ session: ["read"] });
-  return read((api) => api["session.attempts"]({ sessionId }));
+  const { items, truncated } = await allPages((page) => read((api) => api["session.attempts"]({ sessionId, ...page })));
+  return { attempts: items, truncated };
+}
+
+// Every attempt of a session, submitted or not, with answers, scores and what the integrity checks saw (see `getAllAttempts`).
+export async function getAttempts(sessionId: string): Promise<readonly AttemptDetail[]> {
+  return (await getAllAttempts(sessionId)).attempts;
+}
+
+export const attemptsPageSize = 50;
+
+// One page of a session's submitted attempts, for the grading page, which shows them a page at a time.
+export async function getSubmittedAttemptsPage(sessionId: string, cursor?: string) {
+  await requirePermission({ session: ["read"] });
+  return read((api) =>
+    api["session.attempts"]({ sessionId, status: "submitted", limit: attemptsPageSize, ...(cursor === undefined ? {} : { cursor }) }),
+  );
 }
 
 // Sets (null clears) the teacher's score in points and the feedback for one answer. Exam sessions need a

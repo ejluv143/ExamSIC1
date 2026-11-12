@@ -10,7 +10,8 @@ import { MasteryTable } from "@/features/mastery/components/mastery-results";
 import { Badge, ButtonDownload, ButtonLink, Card, CardHeader, EmptyState, Table, Td, Th } from "@/components/ui";
 import { quizQuestions } from "@/features/session/attempt-view";
 import { getGameStandings } from "@/features/game/data";
-import { getAttempts, getSession } from "@/features/session/data";
+import { getAllAttempts, getSession } from "@/features/session/data";
+import { PartialListNotice } from "@/features/session/components/partial-list-notice";
 import { getClass, getStudents } from "@/features/classes/data";
 import { fullName } from "@/lib/format";
 import { formatDateTime } from "@examinus/copy/time";
@@ -48,8 +49,8 @@ export default async function SessionResultsPage(props: PageProps<"/teacher/asse
   if (!detail || detail.session.quizId !== quizId) notFound();
   const { session } = detail;
   const questions = quizQuestions(detail.quiz);
-  const [attempts, cls, roster] = await Promise.all([
-    getAttempts(sessionId),
+  const [{ attempts, truncated }, cls, roster] = await Promise.all([
+    getAllAttempts(sessionId),
     session.classId ? getClass(session.classId) : null,
     getStudents([...detail.studentIds]),
   ]);
@@ -128,6 +129,7 @@ export default async function SessionResultsPage(props: PageProps<"/teacher/asse
 
   return (
     <>
+      <PartialListNotice truncated={truncated} />
       <header className="mb-6">
         <ButtonLink href={`/teacher/assessments/${quizId}`} variant="text" className="mb-2 -ml-1 px-1 py-0 text-muted hover:text-foreground">
           ← {detail.quiz.quiz.title}

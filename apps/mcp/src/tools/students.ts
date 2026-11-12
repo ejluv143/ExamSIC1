@@ -7,6 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { Schema } from "effect";
 import { input, optional } from "../input.ts";
 import { api } from "../api.ts";
+import { allPages } from "@examinus/contract/page";
 import { loadSession } from "../session-data.ts";
 import { fullName, run } from "../util.ts";
 
@@ -15,7 +16,7 @@ async function loadClass(classId: string) {
   if (!cls) throw new Error(`NotFound: class ${classId} does not exist or is not yours.`);
   const [roster, scores] = await Promise.all([
     cls.studentIds.length > 0 ? api((a) => a["class.students"]({ studentIds: cls.studentIds })) : [],
-    api((a) => a["session.classScores"]({ classId })),
+    allPages((page) => api((a) => a["session.classScores"]({ classId, ...page }))).then((r) => r.items),
   ]);
   return { cls, roster, sessions: scores.filter((s) => countsInRecord(s.mode)) };
 }

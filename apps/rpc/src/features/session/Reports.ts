@@ -3,11 +3,13 @@
 import { Conflict, NotFound } from "@examinus/contract/errors";
 import { type Incident } from "@examinus/contract/live";
 import { type AttemptDetail, type ClassSessionScores } from "@examinus/contract/session";
+import { defaultPageSize } from "@examinus/contract/page";
 import { type AttemptStatus } from "@examinus/domain/quiz";
 import { resultsVisible } from "@examinus/domain/release";
 import { latestSubmitted, finalScore } from "@examinus/domain/results";
 import { questionScore } from "@examinus/domain/scoring";
 import { Context, Effect, Layer } from "effect";
+import { decodeCursor } from "../../platform/cursor.ts";
 import { type Actor } from "../auth/Session.ts";
 import { paperOf, statusAfterScoring } from "../attempt/paper.ts";
 import { toIncident } from "../live/rules.ts";
@@ -16,18 +18,33 @@ import { toQuestion } from "../quiz/mappers.ts";
 import { toRecordSession, toSession } from "./mappers.ts";
 import { SessionRepo } from "./Repo.ts";
 
+type PageInput = { limit?: number | undefined; cursor?: string | undefined };
+type Paged<T> = { items: T[]; nextCursor: string | null };
+
+// A request's page as the Repo wants it. A cursor this API did not make is the same as a page that doesn't exist.
+const pageQuery = ({ limit, cursor }: PageInput) => {
+  const after = cursor === undefined ? null : decodeCursor(cursor);
+  return cursor !== undefined && after === null
+    ? Effect.fail(new NotFound({ message: "That page doesn't exist." }))
+    : Effect.succeed({ limit: limit ?? defaultPageSize, after });
+};
+
 export class SessionReports extends Context.Service<
   SessionReports,
   {
-    // Every attempt of the session, submitted or not.
-    readonly attempts: (actor: Actor, sessionId: string) => Effect.Effect<AttemptDetail[], NotFound>;
+    // A page of the session's attempts, oldest start first. NotFound for a cursor this API did not make.
+    readonly attempts: (
+      actor: Actor,
+      sessionId: string,
+      page: PageInput & { status?: "submitted" | "in_progress" | undefined },
+    ) => Effect.Effect<Paged<AttemptDetail>, NotFound>;
     // One attempt as the teacher sees it while it runs, with what the teacher did to it.
     readonly liveAttempt: (
       actor: Actor,
       attemptId: string,
     ) => Effect.Effect<{ detail: AttemptDetail; incidents: Incident[] }, NotFound>;
-    // The sessions linked to a class and each student's score, for the class record.
-    readonly classScores: (actor: Actor, classId: string) => Effect.Effect<ClassSessionScores[]>;
+    // A page of the sessions linked to a class, oldest first, and each student's score, for the class record.
+    readonly classScores: (actor: Actor, classId: string, page: PageInput) => Effect.Effect<Paged<ClassSessionScores>, NotFound>;
     // Sets (or clears, with null) the teacher's score in points and the feedback for one answer, then updates
     // the attempt's status: graded once nothing is left waiting.
     readonly grade: (
@@ -42,9 +59,13 @@ export class SessionReports extends Context.Service<
       const repo = yield* SessionRepo;
       const quizRepo = yield* QuizRepo;
 
-      const attempts = Effect.fn("SessionReports.attempts")(function* (actor: Actor, sessionId: string) {
+      const attempts = Effect.fn("SessionReports.attempts")(function* (
+        actor: Actor,
+        sessionId: string,
+        page: PageInput & { status?: "submitted" | "in_progress" | undefined },
+      ) {
         const { quiz } = yield* repo.ownSession(sessionId, actor);
-        return yield* repo.attemptDetails(quiz, { sessionId });
+        return yield* repo.attemptsPage(quiz, sessionId, { ...(yield* pageQuery(page)), status: page.status });
       });
 
       const liveAttempt = Effect.fn("SessionReports.liveAttempt")(function* (actor: Actor, attemptId: string) {
@@ -54,10 +75,10 @@ export class SessionReports extends Context.Service<
         return { detail: detail!, incidents: rows.map(toIncident) };
       });
 
-      const classScores = Effect.fn("SessionReports.classScores")(function* (actor: Actor, classId: string) {
+      const classScores = Effect.fn("SessionReports.classScores")(function* (actor: Actor, classId: string, page: PageInput) {
         const now = Date.now();
-        const { rows, parts, done, answerRows } = yield* repo.classScoreData(actor, classId);
-        return rows.map(({ session, quiz }): ClassSessionScores => {
+        const { rows, nextCursor, parts, done, answerRows } = yield* repo.classScoreData(actor, classId, yield* pageQuery(page));
+        const items = rows.map(({ session, quiz }): ClassSessionScores => {
           const paperParts = parts.get(quiz.id) ?? [];
           const { session: s, record } = toRecordSession(session, quiz, paperParts, now);
           // Each student's latest submitted attempt.
@@ -80,6 +101,7 @@ export class SessionReports extends Context.Service<
             }),
           };
         });
+        return { items, nextCursor };
       });
 
       const grade = Effect.fn("SessionReports.grade")(function* (

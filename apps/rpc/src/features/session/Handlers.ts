@@ -178,9 +178,9 @@ const reports = Layer.mergeAll(
     "session.attempts",
     Effect.gen(function* () {
       const reports = yield* SessionReports;
-      return Effect.fn("session.attempts")(function* ({ sessionId }) {
+      return Effect.fn("session.attempts")(function* ({ sessionId, limit, cursor, status }) {
         const user = yield* requireActor({ session: ["read"] });
-        return yield* reports.attempts(user.actor, sessionId);
+        return yield* reports.attempts(user.actor, sessionId, { limit, cursor, status });
       });
     }),
   ),
@@ -198,9 +198,9 @@ const reports = Layer.mergeAll(
     "session.classScores",
     Effect.gen(function* () {
       const reports = yield* SessionReports;
-      return Effect.fn("session.classScores")(function* ({ classId }) {
+      return Effect.fn("session.classScores")(function* ({ classId, limit, cursor }) {
         const user = yield* requireActor({ session: ["read"] });
-        return yield* reports.classScores(user.actor, classId);
+        return yield* reports.classScores(user.actor, classId, { limit, cursor });
       });
     }),
   ),

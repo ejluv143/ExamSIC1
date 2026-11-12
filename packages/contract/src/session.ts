@@ -11,6 +11,7 @@ import { Conflict, Forbidden, NotFound } from "./errors.ts";
 import { Incident } from "./live.ts";
 import { AuthMiddleware } from "./middleware.ts";
 import { QuizDetail } from "./quiz.ts";
+import { Page, PageRequest } from "./page.ts";
 import { AttemptId, QuizId, SessionId } from "./shared.ts";
 
 const ByQuestion = <S extends Schema.Top>(schema: S) => Schema.Record(Schema.String, schema);
@@ -209,8 +210,13 @@ export class SessionRpcs extends RpcGroup.make(
     success: Session,
     error: teacherErrors,
   }),
-  // Every attempt of the session, submitted or not.
-  Rpc.make("attempts", { payload: SessionId, success: Schema.Array(AttemptDetail), error: teacherErrors }),
+  // The session's attempts, oldest start first, a page at a time. `status` narrows them: "submitted" is every attempt
+  // that is no longer in progress; omitted, all of them.
+  Rpc.make("attempts", {
+    payload: { ...SessionId, ...PageRequest, status: Schema.optionalKey(Schema.Literals(["submitted", "in_progress"])) },
+    success: Page(AttemptDetail),
+    error: teacherErrors,
+  }),
   // Sets (or clears, with null) the teacher's score in points and the feedback for one answer, then updates
   // the attempt's status: graded once nothing is left waiting.
   Rpc.make("grade", {
@@ -225,11 +231,11 @@ export class SessionRpcs extends RpcGroup.make(
     success: Schema.Struct({ status: AttemptStatus }),
     error: stateErrors,
   }),
-  // The sessions linked to a class and each student's score, for the class record.
+  // The sessions linked to a class, oldest first, a page at a time, and each student's score in them, for the class record.
   Rpc.make("classScores", {
-    payload: { classId: Schema.String },
-    success: Schema.Array(ClassSessionScores),
-    error: Forbidden,
+    payload: { classId: Schema.String, ...PageRequest },
+    success: Page(ClassSessionScores),
+    error: teacherErrors,
   }),
   // --- Teacher actions while the session runs (each is kept as an `Incident`) ---
   // Stops every clock and refuses saves; deadlines move by the time paused once it resumes.

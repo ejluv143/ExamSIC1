@@ -170,10 +170,12 @@ export const sessionWorld = (options: SessionWorldOptions = {}) => {
         }),
       incidentsOf: () => Effect.succeed(state.incidentRows),
       attemptDetails: () => Effect.succeed([]),
+      attemptsPage: () => Effect.succeed({ items: [], nextCursor: null }),
       // Roster ids are "roster-" and the account id.
       classScoreData: () =>
         Effect.succeed({
           rows: [...state.sessions.values()].map((s) => ({ session: s, quiz })),
+          nextCursor: null,
           parts: new Map([[quiz.id, [...quizDetail(undefined, quiz).parts]]]),
           done: state.attempts.filter((a) => a.status !== "in_progress").map((attempt) => ({ attempt, rosterId: `roster-${attempt.studentId}` })),
           answerRows: state.answers,

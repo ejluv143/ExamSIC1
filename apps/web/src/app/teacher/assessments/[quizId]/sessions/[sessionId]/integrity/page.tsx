@@ -6,7 +6,8 @@ import { alertStyle, AlertChip, IntegrityLevelBadge } from "@/features/session/c
 import { Badge, ButtonLink, Card, CardHeader, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import { quizQuestions } from "@/features/session/attempt-view";
 import { questionNumber } from "@examinus/domain/results";
-import { getAttempts, getSession } from "@/features/session/data";
+import { getAllAttempts, getSession } from "@/features/session/data";
+import { PartialListNotice } from "@/features/session/components/partial-list-notice";
 import { getStudents } from "@/features/classes/data";
 import { fullName } from "@/lib/format";
 import { formatDateTime, formatRelative, formatTime } from "@examinus/copy/time";
@@ -36,7 +37,7 @@ export default async function IntegrityPage(
   const { quizId, sessionId } = await props.params;
   const { type } = await props.searchParams;
   // An unknown session is a 404 from either call.
-  const [detail, attempts] = await Promise.all([getSession(sessionId), getAttempts(sessionId)]);
+  const [detail, { attempts, truncated }] = await Promise.all([getSession(sessionId), getAllAttempts(sessionId)]);
   if (!detail || detail.session.quizId !== quizId) notFound();
   const { session } = detail;
   const questions = quizQuestions(detail.quiz);
@@ -66,6 +67,7 @@ export default async function IntegrityPage(
 
   return (
     <>
+      <PartialListNotice truncated={truncated} />
       <PageHeader
         back={{ href: `/teacher/assessments/${quizId}/sessions/${sessionId}`, label: detail.quiz.quiz.title }}
         title="Anti-cheating"
