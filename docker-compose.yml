@@ -51,3 +51,16 @@ services:
       - ./observability/grafana/provisioning/dashboards/examinus-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/examinus-dashboards.yaml:ro
       - ./observability/grafana/provisioning/alerting/examinus-alerts.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/examinus-alerts.yaml:ro
       - ./observability/grafana/dashboards:/examinus/dashboards:ro
+      # Examinus branding: Grafana's logo, favicon and touch icon are replaced by the Examinus ones.
+      - ./observability/grafana/branding/examinus-icon.svg:/otel-lgtm/grafana/public/img/grafana_icon.svg:ro
+      - ./observability/grafana/branding/fav32.png:/otel-lgtm/grafana/public/img/fav32.png:ro
+      - ./observability/grafana/branding/apple-touch-icon.png:/otel-lgtm/grafana/public/img/apple-touch-icon.png:ro
+      # This Grafana serves them from public/build (the hashed name is pinned to the image version above).
+      - ./observability/grafana/branding/examinus-icon.svg:/otel-lgtm/grafana/public/build/img/grafana_icon.svg:ro
+      - ./observability/grafana/branding/examinus-icon.svg:/otel-lgtm/grafana/public/build/img/grafana_mask_icon.svg:ro
+      - ./observability/grafana/branding/examinus-icon.svg:/otel-lgtm/grafana/public/build/static/img/grafana_icon.1e0deb6b.svg:ro
+      - ./observability/grafana/branding/fav32.png:/otel-lgtm/grafana/public/build/img/fav32.png:ro
+      - ./observability/grafana/branding/apple-touch-icon.png:/otel-lgtm/grafana/public/build/img/apple-touch-icon.png:ro
+      # Login heading and app title are compiled into this chunk (Branding.LoginTitle / AppTitle): a copy of it with
+      # the two strings changed. The hashed name is pinned to the image version above; regenerate it on upgrade.
+      - ./observability/grafana/branding/6540.acf453ee99146ad315f3.js:/otel-lgtm/grafana/public/build/6540.acf453ee99146ad315f3.js:ro

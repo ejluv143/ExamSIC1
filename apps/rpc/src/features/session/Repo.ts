@@ -1,6 +1,6 @@
 // The session tables: sessions and their rosters, when they open and end, and the attempts a teacher sees and
 // steers (details, clocks, grades).
-import { NotFound } from "@examinus/contract/errors";
+import { Conflict, NotFound } from "@examinus/contract/errors";
 import { type AttemptDetail } from "@examinus/contract/session";
 import { type Accommodations } from "@examinus/domain/accommodations";
 import { newJoinKey } from "@examinus/domain/join-key";
@@ -174,10 +174,10 @@ export class SessionRepo extends Context.Service<
     // The session row (it must exist).
     readonly find: (sessionId: string) => Effect.Effect<QuizSessionItem>;
     // Creates a session with a fresh join key. The key must be unique among sessions that have not ended; a clash
-    // (the partial unique index) draws a new one.
+    // (the partial unique index) draws a new one. Conflict when 20 draws in a row were all taken.
     readonly insert: (
       values: Omit<typeof quizSessions.$inferInsert, "joinCode">,
-    ) => Effect.Effect<QuizSessionItem>;
+    ) => Effect.Effect<QuizSessionItem, Conflict>;
     readonly update: (sessionId: string, set: SessionColumns) => Effect.Effect<void>;
     readonly remove: (sessionId: string) => Effect.Effect<void>;
     // The teacher's sessions (of one quiz and/or class) with their roster and submission counts, newest first.
@@ -326,17 +326,18 @@ export class SessionRepo extends Context.Service<
           return row!;
         }),
         insert: Effect.fn("SessionRepo.insert")(function* (values) {
-          return yield* db.query(async (d) => {
+          const created = yield* db.query(async (d) => {
             for (let attempt = 0; attempt < 20; attempt++) {
-              const [created] = await d
+              const [row] = await d
                 .insert(quizSessions)
                 .values({ ...values, joinCode: newJoinKey() })
                 .onConflictDoNothing()
                 .returning();
-              if (created) return created;
+              if (row) return row;
             }
-            throw new Error("Could not find a free join key.");
+            return null;
           });
+          return created ?? (yield* new Conflict({ message: "Couldn't find a free join key. Try again in a moment." }));
         }),
         update: Effect.fn("SessionRepo.update")(function* (sessionId, set) {
           yield* db.query((d) => d.update(quizSessions).set(set).where(eq(quizSessions.id, sessionId)));

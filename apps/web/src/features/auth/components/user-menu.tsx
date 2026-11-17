@@ -33,11 +33,13 @@ export async function UserMenu() {
     </>
   );
   const row = "flex min-w-0 flex-1 items-center gap-3 rail:flex-col rail:gap-2";
+  const role = roleOf(user);
+  const profileHref = role === "student" ? "/student/profile" : role === "teacher" ? "/teacher/profile" : null;
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border p-3 rail:flex-col rail:gap-2 rail:border-0 rail:p-0">
-      {/* Students open their profile (Student Information) from their name. */}
-      {roleOf(user) === "student" ? (
-        <Link href="/student/profile" title="Your profile" className={`${row} rounded-md hover:opacity-80 focus-visible:outline-2 focus-visible:outline-primary`}>
+      {/* Students open Student Information and teachers their profile from their name. */}
+      {profileHref ? (
+        <Link href={profileHref} title="Your profile" className={`${row} rounded-md hover:opacity-80 focus-visible:outline-2 focus-visible:outline-primary`}>
           {who}
         </Link>
       ) : (

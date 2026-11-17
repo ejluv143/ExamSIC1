@@ -1,6 +1,6 @@
 // The session Repo's rules against a real Postgres: who is on a session's roster (in an organization and in the
 // personal space, where the organization is null) and what the teacher may set for them.
-import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { noAccommodations } from "@examinus/domain/accommodations";
 import { eq } from "drizzle-orm";
 import { Effect, Layer } from "effect";
@@ -144,5 +144,23 @@ describe("saving a grade", () => {
     const logged = await db.select().from(gradeChanges);
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatchObject({ answerId: answer!.id, ...change });
+  });
+});
+
+describe("inserting a session", () => {
+  test("running out of free join keys is a typed Conflict, not a defect", async () => {
+    await db.insert(quizzes).values(quizRow({ id: "quiz1", ownerId: "teacher1", organizationId: "org1" }));
+    // Every draw returns the same key, so the second session can never find a free one.
+    const draw = spyOn(crypto, "getRandomValues").mockImplementation(((a: Uint8Array) => a.fill(0)) as typeof crypto.getRandomValues);
+    try {
+      const { joinCode: _, id: __, ...values } = sessionRow({ quizId: "quiz1", status: "scheduled" });
+      await run((repo) => repo.insert(values));
+      const outcome = await Effect.runPromise(
+        SessionRepo.use((repo) => repo.insert({ ...values, id: "second" })).pipe(Effect.provide(repoLayer), Effect.flip),
+      );
+      expect(outcome._tag).toBe("Conflict");
+    } finally {
+      draw.mockRestore();
+    }
   });
 });

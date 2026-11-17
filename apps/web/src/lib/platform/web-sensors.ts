@@ -1,6 +1,8 @@
 import type { IntegrityEmit, IntegritySensor } from "@examinus/taking/integrity";
 import { integrityNotice } from "@examinus/copy/integrity";
 import type { IntegrityEventType, IntegritySettings } from "@examinus/domain/quiz";
+import { inDesktop } from "./desktop";
+import { desktopLockdownSensor } from "./desktop-sensor";
 
 // More characters appearing in one go isn't typing.
 const bulkInputChars = 30;
@@ -27,6 +29,8 @@ export function webSensors(settings: IntegritySettings, { needsFullscreen }: { n
       start: () => () => {},
     },
   ];
+  // Examinus Desktop reports what only its shell can know (the window was let go).
+  if (inDesktop()) sensors.push(desktopLockdownSensor);
   if (trackFocus) sensors.push({ start: trackFocusListeners });
   if (blockSecondScreen) sensors.push({ start: secondScreenListener });
   if (needsFullscreen) sensors.push({ start: fullscreenListener });

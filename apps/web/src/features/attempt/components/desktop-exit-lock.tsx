@@ -3,20 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { KeyRound } from "lucide-react";
 import { Button, inputClass } from "@/components/ui";
+import { inDesktop, signalDesktop } from "@/lib/platform/desktop";
 import { verifyExitPassword } from "../actions";
-
-// The web app talks to Examinus Desktop by navigating to these URLs; the shell swallows the navigation and acts
-// on the host: `lock` (closing needs the exit password), `unlock`, `exit` (close now). See apps/desktop lib.rs.
-const signal = (name: "lock" | "unlock" | "exit") => location.assign(`examinus-desktop://${name}`);
-
-const inDesktop = () => typeof window !== "undefined" && "__EXAMINUS_DESKTOP__" in window;
-
-declare global {
-  interface Window {
-    // Called by the shell when the student tried to close the app while locked.
-    __examinusExitRequested?: () => void;
-  }
-}
 
 // While an attempt is in progress in Examinus Desktop and the session has an exit password, the app refuses to
 // close; trying opens this dialog, and the right password lets it close. Renders nothing in a browser.
@@ -30,10 +18,10 @@ export function DesktopExitLock({ sessionId, locked }: { sessionId: string; lock
   useEffect(() => {
     if (!active) return;
     window.__examinusExitRequested = () => setAsked(true);
-    signal("lock");
+    signalDesktop("lock");
     return () => {
       delete window.__examinusExitRequested;
-      signal("unlock");
+      signalDesktop("unlock");
     };
   }, [active]);
 
@@ -44,7 +32,7 @@ export function DesktopExitLock({ sessionId, locked }: { sessionId: string; lock
       const result = await verifyExitPassword(sessionId, password);
       if ("error" in result) return setError(result.error);
       if (!result.ok.ok) return setError("That isn't the exit password.");
-      signal("exit");
+      signalDesktop("exit");
     });
   }
 

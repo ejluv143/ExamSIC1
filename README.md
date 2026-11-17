@@ -149,6 +149,8 @@ npm run dev:runner       # http://127.0.0.1:4100
 ```
 Set the same `RUNNER_SECRET` and `RUNNER_URL=http://127.0.0.1:4100` in `apps/rpc/.env`. Without the runner, code answers wait for the teacher to grade them.
 
+**More than one runner on a host.** Each runner has an instance name (`RUNNER_INSTANCE`, default `port-<PORT>`, so give each its own port). Its containers carry the label `examinus.runner=<name>` and its work folders live in `examinus-runner-<name>` in the temp directory, so starting or restarting a runner removes only its own leftovers from a crash and never another runner's running jobs.
+
 **How it schedules and why it is not faster.** `npm run bench -w @examinus/runner` times each language (1 test against 10, so it separates the start-up from the per-test cost). On an 8-core laptop, in ms (median of 3): Python 413 start-up + 59 per test, JavaScript 450 + 90, C 577 + 28, C++ 832 + 34, PHP 457 + 60, Java 2421 + 152. Start-up (container, compile) dominates, and a job has at most 30 tests, so per-test parallelism would save well under a second except for Java. A warm pool would not remove Java's `javac` and JVM start, which happen per submission, and it would reuse a container between students, which the fresh-container isolation (issues #18 and #19) rules out. So neither is built; look again if the numbers on the production host differ much. What is built: a student's **Run samples** goes to a separate queue that is served before graded submits (after 4 samples in a row the next free slot goes to a graded one, so grading is never starved). `GET /health` shows both queues.
 
 ## Desktop app (students)
