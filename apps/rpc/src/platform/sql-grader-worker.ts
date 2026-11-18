@@ -2,6 +2,7 @@
 // query can't change what the next sees. Reads the job as JSON on stdin, writes the result as JSON on stdout.
 // A separate process (not a worker thread) because Bun can't terminate a worker that is busy inside WebAssembly;
 // the parent kills this process when the time limit passes.
+import { cleanSetup, splitStatements } from "@examinus/domain/sql";
 import initSqlJs, { type Database } from "sql.js";
 
 const { setup, extra, queries, maxRows } = JSON.parse(await Bun.stdin.text()) as {
@@ -19,8 +20,8 @@ const fresh = (): Database => {
     db.create_function(name, () => {
       throw new Error(name + " is turned off");
     });
-  db.exec(setup);
-  if (extra) db.exec(extra);
+  db.exec(cleanSetup(setup));
+  if (extra) db.exec(cleanSetup(extra));
   return db;
 };
 try {
@@ -33,7 +34,10 @@ try {
 const results = queries.map((sql) => {
   const db = fresh();
   try {
-    const stmt = db.prepare(sql);
+    // Any statements before the last build the student's own tables; the last one is the SELECT that is compared.
+    const statements = splitStatements(sql);
+    for (const s of statements.slice(0, -1)) db.run(s);
+    const stmt = db.prepare(statements.at(-1) ?? sql);
     const columns = stmt.getColumnNames();
     const rows: unknown[][] = [];
     while (rows.length < maxRows && stmt.step()) rows.push(stmt.get().map((v) => (v instanceof Uint8Array ? "(blob)" : v)));

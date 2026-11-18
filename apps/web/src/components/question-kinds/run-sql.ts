@@ -1,6 +1,6 @@
 // Runs SQL in the browser with sql.js's own Web Worker (copied to /sqljs by scripts/copy-sqljs.mjs).
 // For the Run button, the table preview and the teacher's preview only; grading runs again on the server.
-import { checkQuery, maxRows, type SqlResult } from "@examinus/domain/sql";
+import { checkQuery, cleanSetup, maxRows, type SqlResult } from "@examinus/domain/sql";
 
 const timeLimitMs = 3000;
 
@@ -36,7 +36,7 @@ export async function runSqlInBrowser(setup: string, query: string): Promise<{ r
   const invalid = checkQuery(query);
   if (invalid) return { error: invalid };
   return withDatabase(async (exec) => {
-    const made = await exec(setup);
+    const made = await exec(cleanSetup(setup));
     if (made.error) return { error: `The tables couldn't be created: ${made.error}` };
     const reply = await exec(query);
     if (reply.error) return { error: reply.error };
@@ -49,7 +49,7 @@ export async function runSqlInBrowser(setup: string, query: string): Promise<{ r
 // Every table the setup makes, with its first rows, so students can see the data they're querying.
 export async function previewTables(setup: string) {
   return withDatabase(async (exec): Promise<{ name: string; result: SqlResult }[] | { error: string }> => {
-    const made = await exec(setup);
+    const made = await exec(cleanSetup(setup));
     if (made.error) return { error: made.error };
     const names = await exec(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid",

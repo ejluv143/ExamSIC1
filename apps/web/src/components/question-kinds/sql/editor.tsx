@@ -31,7 +31,7 @@ export function Editor({ q, onChange }: EditorProps<"sql">) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted">
-        Students write one SELECT query against your tables. It&apos;s right when it returns the same rows as your
+        Students write a SELECT query against your tables. They can also CREATE and fill their own tables first; the last statement must be the SELECT. It&apos;s right when it returns the same rows as your
         answer query; column names don&apos;t matter. Graded automatically on the server (SQLite).
       </p>
 

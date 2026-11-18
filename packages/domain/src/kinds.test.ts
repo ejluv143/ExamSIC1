@@ -9,7 +9,7 @@ import { questionTypes, type Question, type QuestionType } from "./question.ts";
 import type { AnswerValue } from "./quiz.ts";
 import { partialCreditApplies, practiceTypes, reviewableTypes } from "./scoring.ts";
 import { subjectAreaNames } from "./roles.ts";
-import { checkQuery, formatTable, sameResult } from "./sql.ts";
+import { checkQuery, cleanSetup, formatTable, sameResult } from "./sql.ts";
 import * as f from "./test-fixtures.ts";
 
 // One row of the import template, with the cells a test names; the rest are empty.
@@ -165,7 +165,7 @@ const cases: { readonly [T in QuestionType]: Case } = {
     key: "SELECT a FROM t",
     summary: "SELECT a FROM t",
     scores: [["select 1", null]],
-    invalid: [f.sql({ answerSql: "drop table t" }), "answer query: Write a SELECT query (it can start with WITH)."],
+    invalid: [f.sql({ answerSql: "drop table t" }), "answer query: End with a SELECT query (it can start with WITH)."],
   },
   drawing: {
     q: f.drawing(),
@@ -370,7 +370,15 @@ describe("shared text and number helpers", () => {
     expect(checkQuery("select ';'")).toBeNull();
     expect(checkQuery("")).toBe("Write a query first.");
     expect(checkQuery("drop table x")).toContain("SELECT");
-    expect(checkQuery("select 1; select 2")).toBe("Write one query only.");
+    expect(checkQuery("select 1; select 2")).toContain("CREATE");
+    expect(checkQuery("create table t(a); insert into t values (1); select * from t;")).toBeNull();
+    expect(checkQuery("create table t(a); insert into t values (';');")).toContain("SELECT");
+    expect(checkQuery("attach database 'x' as y; select 1")).toContain("CREATE");
+    expect(checkQuery("pragma table_info(t)")).toContain("SELECT");
+    expect(cleanSetup("CREATE DATABASE d;\nUSE d;\nCREATE TABLE t(a);")).not.toMatch(/database|use/i);
+    expect(cleanSetup("CREATE DATABASE d; USE d; CREATE TABLE t(a); INSERT INTO t VALUES ('use x;');")).toBe(
+      " CREATE TABLE t(a); INSERT INTO t VALUES ('use x;');",
+    );
   });
 
   test("sql results compare by rows", () => {
